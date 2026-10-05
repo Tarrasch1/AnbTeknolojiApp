@@ -1,41 +1,16 @@
-name: Sayfayı yayınla
+# toptanci_takip
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+A new Flutter project.
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+## Getting Started
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
+This project is a starting point for a Flutter application.
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.5'
-          channel: stable
-          cache: true
-      - run: flutter pub get
-      - run: flutter build web --release --base-href /AnbTeknolojiApp/
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: build/web
+A few resources to get you started if this is your first Flutter project:
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
+- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+
+For help getting started with Flutter development, view the
+[online documentation](https://docs.flutter.dev/), which offers tutorials,
+samples, guidance on mobile development, and a full API reference.
