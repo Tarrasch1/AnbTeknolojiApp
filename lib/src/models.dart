@@ -916,12 +916,15 @@ class ServiceTicket {
 }
 
 class LedgerRow {
-  LedgerRow(this.date, this.title, this.debit, this.credit);
+  LedgerRow(this.date, this.title, this.debit, this.credit, {this.detail = '', this.docId = '', this.paymentId = ''});
 
   final DateTime date;
   final String title;
   final double debit;
   final double credit;
+  final String detail;
+  final String docId;
+  final String paymentId;
 }
 
 class AgendaEntry {

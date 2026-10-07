@@ -16,19 +16,14 @@ class StockPage extends StatefulWidget {
 }
 
 class _StockPageState extends State<StockPage> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 7, vsync: this);
+  late final TabController _tabs = TabController(length: 4, vsync: this);
   int _tab = 0;
   final _search = TextEditingController();
   String _category = 'Tümü';
-  String? _countWarehouse;
-  final _countFields = <String, TextEditingController>{};
 
   static const _hints = [
-    'Çubuk eldeki stoğu gösterir. Kırmızı, minimumun altıdır.',
-    'Yeşil giriş, kırmızı çıkış. Fatura, sayım ve transfer burada toplanır.',
-    'Her deponun stoğu ayrıdır. Transfer malı bir depodan diğerine taşır.',
-    'Sayılan adedi yazın. Sistemle fark kadar düzeltme fişi oluşur.',
-    'Seri no satışta garantiye başlar. Servis ekranından da sorgulanır.',
+    'Kategoriye göre süzülür. Satıra tıklayınca ürün kartı açılır.',
+    'Satışta müşteri ve adet yazar. Alışta tedarikçi görünür.',
     'Eksik miktar, minimum stok ile eldeki stok farkıdır. Tedarikçi son alış belgesinden gelir.',
     'Elde durup son 90 günde satılmamış ürünler. Hiç satılmayanlar listenin başındadır.',
   ];
@@ -45,9 +40,6 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
   void dispose() {
     _tabs.dispose();
     _search.dispose();
-    for (final controller in _countFields.values) {
-      controller.dispose();
-    }
     super.dispose();
   }
 
@@ -58,7 +50,7 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
       children: [
         const PageIntro(
           title: 'Ürün ve stok',
-          hint: 'Ne kadar mal var, nerede duruyor, hangisi azalıyor.',
+          hint: 'Stok kodu, adet ve tutarlar satır satır durur.',
           icon: Icons.inventory_2_outlined,
         ),
         Material(
@@ -71,9 +63,6 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
             tabs: const [
               Tab(text: 'Ürünler'),
               Tab(text: 'Hareketler'),
-              Tab(text: 'Depolar'),
-              Tab(text: 'Sayım'),
-              Tab(text: 'Seri no'),
               Tab(text: 'Alış önerisi'),
               Tab(text: 'Yavaş stok'),
             ],
@@ -92,9 +81,6 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
             children: [
               _products(store),
               _moves(store),
-              _warehouses(store),
-              _count(store),
-              _serials(store),
               _reorder(store),
               _slow(store),
             ],
@@ -239,30 +225,48 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
               ? const EmptyHint('Bu filtrede ürün yok.')
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    final cols = constraints.maxWidth >= 1100 ? 3 : constraints.maxWidth >= 720 ? 2 : 1;
-                    final tileWidth = (constraints.maxWidth - 12 * (cols - 1)) / cols;
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: items.map((product) {
-                          final qty = store.stockOf(product.id);
-                          return SizedBox(
-                            width: tileWidth,
-                            child: GoodsCard(
-                              name: product.name,
-                              brand: product.brand,
-                              category: product.category,
-                              sku: product.sku,
-                              price: money(product.salePrice),
-                              stock: qty,
-                              minStock: product.minStock,
-                              reserved: store.reservedOf(product.id),
-                              onTap: () => showGoodsPanel(context, product.id),
-                            ),
-                          );
-                        }).toList(),
+                    final width = constraints.maxWidth < 980 ? 980.0 : constraints.maxWidth;
+                    return Scrollbar(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: width,
+                          child: Column(
+                            children: [
+                              const _StockHead(),
+                              Expanded(
+                                child: ListView.separated(
+                                  itemCount: items.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1, color: kLine),
+                                  itemBuilder: (context, index) {
+                                    final product = items[index];
+                                    final qty = store.stockOf(product.id);
+                                    final low = product.minStock > 0 && qty <= product.minStock;
+                                    return InkWell(
+                                      onTap: () => showGoodsPanel(context, product.id),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        child: Row(
+                                          children: [
+                                            _StockCell(product.sku.isEmpty ? '—' : product.sku, 120),
+                                            Expanded(
+                                              child: Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: kInk)),
+                                            ),
+                                            _StockCell(qtyText(qty), 80, align: TextAlign.right, color: low ? kBad : kInk),
+                                            _StockCell(money(product.purchasePrice), 120, align: TextAlign.right),
+                                            _StockCell(money(product.salePrice), 130, align: TextAlign.right),
+                                            _StockCell(money(product.purchasePrice * qty), 130, align: TextAlign.right),
+                                            _StockCell(money(product.salePrice * qty), 140, align: TextAlign.right),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     );
                   },
@@ -286,173 +290,29 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
           icon: inbound ? Icons.add_circle_outline : Icons.remove_circle_outline,
           tone: inbound ? kGood : kBad,
           title: store.productName(move.productId),
-          subtitle: '${store.warehouseName(move.warehouseId)} · ${shortDate(move.date)} · ${move.note}',
+          subtitle: '${_moveStory(store, move)} · ${shortDate(move.date)}',
           trailing: '${inbound ? '+' : ''}${qtyText(move.qty)}',
         );
       },
     );
   }
 
-  Widget _warehouses(AppStore store) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: () => _editWarehouse(context, null),
-            icon: const Icon(Icons.add),
-            label: const Text('Depo'),
-          ),
-        ),
-        const SizedBox(height: 8),
-        ...store.warehouses.map((warehouse) {
-          return Card(
-            child: ListTile(
-              title: Text(warehouse.name),
-              subtitle: Text('${warehouse.city} · ${warehouse.address}\nStok değeri ${money(store.stockValue(warehouseId: warehouse.id))}'),
-              isThreeLine: true,
-              trailing: IconButton(
-                tooltip: 'Düzenle',
-                onPressed: () => _editWarehouse(context, warehouse),
-                icon: const Icon(Icons.edit_outlined),
-              ),
-            ),
-          );
-        }),
-        const SizedBox(height: 12),
-        const Text('Transfer, çıkış deposundaki stoğu diğer depoya taşır.', style: TextStyle(color: Color(0xFF667085))),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: () => _transfer(context),
-          icon: const Icon(Icons.swap_horiz),
-          label: const Text('Depolar arası transfer'),
-        ),
-      ],
-    );
-  }
-
-  Widget _count(AppStore store) {
-    if (store.warehouses.isEmpty) return const EmptyHint('Önce depo ekleyin.');
-    _countWarehouse ??= store.warehouses.first.id;
-    for (final product in store.products) {
-      _countFields.putIfAbsent(product.id, () {
-        return TextEditingController(text: qtyText(store.stockOf(product.id, warehouseId: _countWarehouse)));
-      });
+  String _moveStory(AppStore store, StockMove move) {
+    final doc = move.docId.isEmpty ? null : store.docById(move.docId);
+    if (doc != null && doc.partyId.isNotEmpty) {
+      final qty = qtyText(move.qty.abs());
+      final action = switch (doc.kind) {
+        DocKind.sale || DocKind.saleWaybill => 'satıldı',
+        DocKind.saleReturn => 'müşteriden iade',
+        DocKind.purchase || DocKind.purchaseWaybill => 'alındı',
+        DocKind.purchaseReturn => 'tedarikçiye iade',
+        _ => 'işlendi',
+      };
+      return '${store.partyName(doc.partyId)} · $qty adet $action · ${doc.no}';
     }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _countWarehouse,
-                  decoration: const InputDecoration(labelText: 'Sayılan depo'),
-                  items: store.warehouses
-                      .map((item) => DropdownMenuItem(value: item.id, child: Text(item.name)))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _countWarehouse = value;
-                      for (final product in store.products) {
-                        _countFields[product.id]?.text = qtyText(store.stockOf(product.id, warehouseId: value));
-                      }
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () {
-                  final counted = <String, double>{};
-                  for (final product in store.products) {
-                    final parsed = parseNum(_countFields[product.id]?.text ?? '');
-                    if (parsed == null) continue;
-                    counted[product.id] = parsed;
-                  }
-                  final changes = store.applyCount(_countWarehouse!, counted);
-                  showMessage(context, changes == 0 ? 'Fark yok, kayıt açılmadı' : '$changes üründe sayım farkı işlendi');
-                },
-                child: const Text('Sayımı işle'),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            itemCount: store.products.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final product = store.products[index];
-              final system = store.stockOf(product.id, warehouseId: _countWarehouse);
-              return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(product.name)),
-                      Text('Sistem ${qtyText(system)}', style: const TextStyle(color: Color(0xFF667085))),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 90,
-                        child: TextField(
-                          controller: _countFields[product.id],
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Sayılan'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
+    return '${store.warehouseName(move.warehouseId)} · ${move.note}';
   }
 
-  Widget _serials(AppStore store) {
-    final query = _search.text.trim().toLowerCase();
-    final items = store.serials.where((item) => query.isEmpty || item.serial.toLowerCase().contains(query)).toList();
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: TextField(
-            controller: _search,
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.qr_code_scanner), hintText: 'Seri no ara'),
-            onChanged: (_) => setState(() {}),
-          ),
-        ),
-        Expanded(
-          child: items.isEmpty
-              ? const EmptyHint('Seri no yok. Alış veya stok girişinde yazabilirsiniz.')
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    return RecordRow(
-                      icon: Icons.qr_code_2,
-                      tone: item.status == SerialStatus.inStock ? kGood : item.status == SerialStatus.sold ? kInfo : kWarn,
-                      title: item.serial,
-                      subtitle: '${store.productName(item.productId)} · ${serialStatusLabel(item.status)}'
-                          '${item.warrantyUntil == null ? '' : ' · garanti ${shortDate(item.warrantyUntil!)}'}',
-                      trailing: item.partyId.isEmpty ? store.warehouseName(item.warehouseId) : store.partyName(item.partyId),
-                      trailingColor: kInk,
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
 }
 
 Future<void> showGoodsPanel(BuildContext context, String productId) {
@@ -991,104 +851,55 @@ Future<void> _manual(BuildContext context, Product product, {required bool inbou
   serials.dispose();
 }
 
-Future<void> _editWarehouse(BuildContext context, Warehouse? existing) async {
-  final store = StoreScope.of(context);
-  final name = TextEditingController(text: existing?.name ?? '');
-  final city = TextEditingController(text: existing?.city ?? '');
-  final address = TextEditingController(text: existing?.address ?? '');
-  final saved = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(existing == null ? 'Yeni depo' : 'Depo'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Ad')),
-          TextField(controller: city, decoration: const InputDecoration(labelText: 'İl')),
-          TextField(controller: address, decoration: const InputDecoration(labelText: 'Adres')),
-        ],
+class _StockHead extends StatelessWidget {
+  const _StockHead();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Color(0xFFF8FAFC),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            _StockCell('Stok kodu', 120, head: true),
+            Expanded(child: Text('Ürün adı', style: TextStyle(fontWeight: FontWeight.w700, color: kMuted, fontSize: 12))),
+            _StockCell('Stok adedi', 80, head: true, align: TextAlign.right),
+            _StockCell('Birim maliyeti', 120, head: true, align: TextAlign.right),
+            _StockCell('Birim satış fiyatı', 130, head: true, align: TextAlign.right),
+            _StockCell('Toplam maliyet', 130, head: true, align: TextAlign.right),
+            _StockCell('Toplam satış bedeli', 140, head: true, align: TextAlign.right),
+          ],
+        ),
       ),
-      actions: [
-        if (existing != null)
-          TextButton(
-            onPressed: () {
-              final message = store.removeWarehouse(existing.id);
-              showMessage(context, message ?? 'Depo silindi');
-              Navigator.pop(context, false);
-            },
-            child: const Text('Sil'),
-          ),
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
-        FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kaydet')),
-      ],
-    ),
-  );
-  if (saved == true && name.text.trim().isNotEmpty) {
-    store.upsertWarehouse(Warehouse(id: existing?.id ?? '', name: name.text.trim(), city: city.text.trim(), address: address.text.trim()));
+    );
   }
-  name.dispose();
-  city.dispose();
-  address.dispose();
 }
 
-Future<void> _transfer(BuildContext context) async {
-  final store = StoreScope.of(context);
-  if (store.products.isEmpty || store.warehouses.length < 2) {
-    showMessage(context, 'Transfer için en az iki depo ve bir ürün gerekli');
-    return;
-  }
-  var productId = store.products.first.id;
-  var fromId = store.warehouses.first.id;
-  var toId = store.warehouses[1].id;
-  final qty = TextEditingController(text: '1');
-  final note = TextEditingController();
-  final saved = await showDialog<bool>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setLocal) => AlertDialog(
-        title: const Text('Transfer'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: productId,
-                decoration: const InputDecoration(labelText: 'Ürün'),
-                items: store.products.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name, overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: (value) => setLocal(() => productId = value ?? productId),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: fromId,
-                decoration: const InputDecoration(labelText: 'Çıkış'),
-                items: store.warehouses.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name))).toList(),
-                onChanged: (value) => setLocal(() => fromId = value ?? fromId),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: toId,
-                decoration: const InputDecoration(labelText: 'Giriş'),
-                items: store.warehouses.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name))).toList(),
-                onChanged: (value) => setLocal(() => toId = value ?? toId),
-              ),
-              const SizedBox(height: 8),
-              TextField(controller: qty, decoration: const InputDecoration(labelText: 'Miktar'), keyboardType: TextInputType.number),
-              TextField(controller: note, decoration: const InputDecoration(labelText: 'Not')),
-            ],
-          ),
+class _StockCell extends StatelessWidget {
+  const _StockCell(this.text, this.width, {this.head = false, this.align = TextAlign.left, this.color});
+
+  final String text;
+  final double width;
+  final bool head;
+  final TextAlign align;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        textAlign: align,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: head ? FontWeight.w700 : FontWeight.w600,
+          color: color ?? (head ? kMuted : kInk),
+          fontSize: head ? 12 : 13,
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Transfer')),
-        ],
       ),
-    ),
-  );
-  if (saved == true && context.mounted) {
-    final message = store.transfer(productId: productId, fromId: fromId, toId: toId, qty: parseNum(qty.text) ?? 0, note: note.text.trim());
-    showMessage(context, message ?? 'Transfer kaydedildi');
+    );
   }
-  qty.dispose();
-  note.dispose();
 }

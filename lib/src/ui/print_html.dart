@@ -75,6 +75,55 @@ String documentHtml(AppStore store, TradeDoc doc) {
 ''';
 }
 
+String statementHtml(
+  AppStore store,
+  Party party,
+  List<({DateTime? date, String title, String detail, double debit, double credit, double balance})> lines,
+) {
+  final profile = store.profile;
+  final rows = lines.map((line) {
+    return '''
+      <tr>
+        <td>${line.date == null ? '' : _esc(shortDate(line.date!))}</td>
+        <td>${_esc(line.title)}${line.detail.isEmpty ? '' : '<div>${_esc(line.detail).replaceAll('\n', '<br>')}</div>'}</td>
+        <td class="num">${line.debit == 0 ? '' : _esc(money(line.debit))}</td>
+        <td class="num">${line.credit == 0 ? '' : _esc(money(line.credit))}</td>
+        <td class="num">${_esc(money(line.balance))}</td>
+      </tr>''';
+  }).join();
+  final note = party.note.trim().isEmpty ? 'Not yok' : party.note.trim();
+  return '''
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ekstre · ${_esc(party.name)}</title>
+<style>
+  body { font-family: "Segoe UI", sans-serif; color: #0f172a; margin: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .muted { color: #64748b; font-size: 12px; }
+  .note { margin: 12px 0; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 8px 6px; text-align: left; font-size: 13px; vertical-align: top; }
+  th { color: #64748b; font-weight: 600; }
+  .num { text-align: right; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <h1>${_esc(profile.name)}</h1>
+  <div class="muted">Hesap ekstresi · ${_esc(party.name)} · ${_esc(partyTypeLabel(party.type))}</div>
+  <div class="note"><strong>Not</strong><div>${_esc(note)}</div></div>
+  <table>
+    <thead><tr><th>Tarih</th><th>Açıklama</th><th class="num">Borç</th><th class="num">Alacak</th><th class="num">Bakiye</th></tr></thead>
+    <tbody>$rows</tbody>
+  </table>
+  <p class="muted">Bu çıktı şirket içi ekstre belgesidir.</p>
+  <script>window.addEventListener('load', () => window.print());</script>
+</body>
+</html>
+''';
+}
+
 String _esc(String value) {
   return value
       .replaceAll('&', '&amp;')

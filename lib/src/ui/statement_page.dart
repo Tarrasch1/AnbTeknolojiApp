@@ -8,6 +8,8 @@ import '../xlsx_sheet.dart';
 import 'cards.dart';
 import 'docs_page.dart';
 import 'finance_page.dart';
+import 'print_html.dart';
+import 'print_launch_stub.dart' if (dart.library.html) 'print_launch_web.dart';
 import 'save_file_stub.dart' if (dart.library.html) 'save_file_web.dart';
 import 'scope.dart';
 import 'theme.dart';
@@ -46,18 +48,23 @@ class _StatementPageState extends State<StatementPage> {
     final range = _range();
     final slice = store.statementBetween(party.id, range.$1, range.$2);
     var running = slice.opening;
-    final lines = <({LedgerRow? row, double balance, String title, DateTime? date, double debit, double credit})>[];
+    final lines = <({LedgerRow? row, double balance, String title, String detail, DateTime? date, double debit, double credit})>[];
     if (range.$1 != null) {
-      lines.add((row: null, balance: slice.opening, title: 'Önceki dönem devri', date: null, debit: 0, credit: 0));
+      lines.add((row: null, balance: slice.opening, title: 'Önceki dönem devri', detail: '', date: null, debit: 0, credit: 0));
     }
     for (final row in slice.rows) {
       running = round2(running + row.debit - row.credit);
-      lines.add((row: row, balance: running, title: row.title, date: row.date, debit: row.debit, credit: row.credit));
+      lines.add((row: row, balance: running, title: row.title, detail: row.detail, date: row.date, debit: row.debit, credit: row.credit));
     }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Hesap ekstresi'),
         actions: [
+          IconButton(
+            tooltip: 'Yazdır',
+            onPressed: () => launchPrint(statementHtml(store, party, lines.map((line) => (date: line.date, title: line.title, detail: line.detail, debit: line.debit, credit: line.credit, balance: line.balance)).toList())),
+            icon: const Icon(Icons.print_outlined),
+          ),
           IconButton(
             tooltip: 'Excel',
             onPressed: () => _export(party.name, lines),
@@ -103,6 +110,17 @@ class _StatementPageState extends State<StatementPage> {
             ),
           ),
           const SizedBox(height: 12),
+          HoverCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Not', style: TextStyle(fontWeight: FontWeight.w800, color: kNavy)),
+                const SizedBox(height: 6),
+                Text(party.note.trim().isEmpty ? 'Not yok' : party.note.trim(), style: const TextStyle(height: 1.35)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -130,20 +148,13 @@ class _StatementPageState extends State<StatementPage> {
             ],
           ),
           const SizedBox(height: 8),
-          const Text('Her satırın sonunda bakiye yeniden hesaplanır. Excel düğmesi bu dönemi indirir.', style: TextStyle(color: kMuted, height: 1.35)),
+          const Text('Satış satırında ürün ve tutar, tahsilat satırında açıklama yazar. Yanlış kayıt satırdaki Düzelt ile değişir. Excel ve yazdırma aynı detayı alır.', style: TextStyle(color: kMuted, height: 1.35)),
           const SizedBox(height: 12),
           if (lines.isEmpty)
             const EmptyHint('Bu dönemde hareket yok.')
           else
             for (final line in lines)
               HoverCard(
-                onTap: line.row == null
-                    ? null
-                    : () {
-                        final doc = _docFor(store, line.title);
-                        if (doc == null) return;
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id)));
-                      },
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -155,6 +166,10 @@ class _StatementPageState extends State<StatementPage> {
                         if (line.date != null) Text(shortDate(line.date!), style: const TextStyle(color: kMuted, fontSize: 12)),
                       ],
                     ),
+                    if (line.detail.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(line.detail, style: const TextStyle(height: 1.35, color: kInk)),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -163,6 +178,17 @@ class _StatementPageState extends State<StatementPage> {
                         _Amount(label: 'Bakiye', value: line.balance, tone: balanceColor(line.balance), emphasize: true),
                       ],
                     ),
+                    if (line.row != null && (line.row!.docId.isNotEmpty || line.row!.paymentId.isNotEmpty)) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _edit(store, line.row!),
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          label: const Text('Düzelt'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -171,21 +197,33 @@ class _StatementPageState extends State<StatementPage> {
     );
   }
 
-  TradeDoc? _docFor(AppStore store, String title) {
-    for (final doc in store.docs) {
-      if (doc.partyId == widget.partyId && title.contains(doc.no)) return doc;
+  Future<void> _edit(AppStore store, LedgerRow row) async {
+    if (row.paymentId.isNotEmpty) {
+      Payment? payment;
+      for (final item in store.payments) {
+        if (item.id == row.paymentId) payment = item;
+      }
+      if (payment == null) return;
+      await openPaymentDialog(context, existing: payment);
+      return;
     }
-    return null;
+    final doc = store.docById(row.docId);
+    if (doc == null || !mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DocEditor(kind: doc.kind, draft: doc, revising: true)),
+    );
   }
 
-  Future<void> _export(String partyName, List<({LedgerRow? row, double balance, String title, DateTime? date, double debit, double credit})> lines) async {
+  Future<void> _export(String partyName, List<({LedgerRow? row, double balance, String title, String detail, DateTime? date, double debit, double credit})> lines) async {
     final table = SheetTable(
-      const ['Tarih', 'Açıklama', 'Borç', 'Alacak', 'Bakiye'],
+      const ['Tarih', 'Açıklama', 'Detay', 'Borç', 'Alacak', 'Bakiye'],
       [
         for (final line in lines)
           [
             line.date == null ? '' : shortDate(line.date!),
             line.title,
+            line.detail,
             line.debit == 0 ? '' : sheetNum(line.debit),
             line.credit == 0 ? '' : sheetNum(line.credit),
             sheetNum(line.balance),

@@ -441,6 +441,12 @@ class DocDetailPage extends StatelessWidget {
                   icon: const Icon(Icons.copy_outlined),
                   label: const Text('Kopyala'),
                 ),
+              if (doc.status == DocStatus.approved)
+                FilledButton.icon(
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocEditor(kind: doc.kind, draft: doc, revising: true))),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Düzelt'),
+                ),
               if (doc.status == DocStatus.draft) ...[
                 FilledButton.icon(
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocEditor(kind: doc.kind, draft: doc))),
@@ -702,13 +708,14 @@ class _EditorLineState extends State<_EditorLine> {
 }
 
 class DocEditor extends StatefulWidget {
-  const DocEditor({required this.kind, this.draft, this.prefill, this.partyId = '', this.asCopy = false, super.key});
+  const DocEditor({required this.kind, this.draft, this.prefill, this.partyId = '', this.asCopy = false, this.revising = false, super.key});
 
   final DocKind kind;
   final TradeDoc? draft;
   final TradeDoc? prefill;
   final String partyId;
   final bool asCopy;
+  final bool revising;
 
   @override
   State<DocEditor> createState() => _DocEditorState();
@@ -836,7 +843,7 @@ class _DocEditorState extends State<DocEditor> {
     final lines = FormSection(
       step: '2',
       title: 'Kalemler',
-      hint: 'Fiyat KDV hariçtir. Taslak stok ve cariyi değiştirmez.',
+      hint: widget.revising ? 'Kayıt onaylı. Kaydedince stok ve cari bu kalemlere göre yeniden işlenir.' : 'Fiyat KDV hariçtir. Taslak stok ve cariyi değiştirmez.',
       icon: Icons.list_alt_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -919,13 +926,16 @@ class _DocEditorState extends State<DocEditor> {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: OutlinedButton(onPressed: () => _save(approve: false), child: const Text('Taslak kaydet'))),
-              const SizedBox(width: 8),
-              Expanded(child: FilledButton(onPressed: () => _save(approve: true), child: const Text('Onayla'))),
-            ],
-          ),
+          if (widget.revising)
+            FilledButton(onPressed: () => _save(approve: true), child: const Text('Düzeltmeyi kaydet'))
+          else
+            Row(
+              children: [
+                Expanded(child: OutlinedButton(onPressed: () => _save(approve: false), child: const Text('Taslak kaydet'))),
+                const SizedBox(width: 8),
+                Expanded(child: FilledButton(onPressed: () => _save(approve: true), child: const Text('Onayla'))),
+              ],
+            ),
         ],
       ),
     );
@@ -1067,6 +1077,12 @@ class _DocEditorState extends State<DocEditor> {
   void _save({required bool approve}) {
     final store = StoreScope.of(context);
     final doc = _build();
+    if (widget.revising) {
+      final error = store.reviseDoc(doc);
+      showMessage(context, error ?? 'Belge düzeltildi');
+      if (error == null) Navigator.pop(context);
+      return;
+    }
     final draftError = store.addDraft(doc);
     if (draftError != null) {
       showMessage(context, draftError);

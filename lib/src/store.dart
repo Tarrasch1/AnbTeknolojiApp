@@ -580,6 +580,49 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
+  String? reviseDoc(TradeDoc doc) {
+    final index = docs.indexWhere((item) => item.id == doc.id);
+    if (index < 0) return 'Belge yok';
+    final current = docs[index];
+    if (current.status != DocStatus.approved) return 'Yalnız onaylı belge düzeltilebilir';
+    if (current.kind != doc.kind) return 'Belge türü değişmez';
+    if (doc.partyId.isEmpty) return 'Cari seçin';
+    if (doc.warehouseId.isEmpty) return 'Depo seçin';
+    if (doc.lines.isEmpty) return 'En az bir kalem ekleyin';
+    if (doc.lines.any((line) => line.qty <= 0)) return 'Miktar sıfırdan büyük olmalı';
+    final spawned = docs.any((item) => item.sourceDocId == current.id && item.status != DocStatus.cancelled);
+    if (spawned) return 'Bu belgeye bağlı fatura varken düzeltilemez';
+    final posted = current.stockPosted;
+    if (posted) _postStock(current, reverse: true);
+    doc
+      ..status = DocStatus.approved
+      ..no = current.no
+      ..stockPosted = posted
+      ..sourceDocId = current.sourceDocId
+      ..eDoc = current.eDoc
+      ..promiseDate = current.promiseDate;
+    docs[index] = doc;
+    if (posted) _postStock(doc, reverse: false);
+    _touch();
+    return null;
+  }
+
+  String docLineDetail(TradeDoc doc) {
+    final parts = <String>[
+      for (final line in doc.lines)
+        '${productName(line.productId)} ${qtyText(line.qty)} adet × ${money(line.unitPrice)} = ${money(line.gross)}',
+    ];
+    if (doc.note.trim().isNotEmpty) parts.add(doc.note.trim());
+    return parts.join('\n');
+  }
+
+  String paymentDetail(Payment payment) {
+    final note = payment.note.trim();
+    final method = payMethodLabel(payment.method);
+    if (note.isEmpty) return method;
+    return '$method · $note';
+  }
+
   String? setEDoc(String id, EDocStatus status) {
     final doc = docById(id);
     if (doc == null) return 'Belge yok';
@@ -1103,15 +1146,16 @@ class AppStore extends ChangeNotifier {
     for (final doc in docs) {
       if (doc.partyId != partyId || doc.status != DocStatus.approved) continue;
       final gross = doc.gross;
+      final detail = docLineDetail(doc);
       switch (doc.kind) {
         case DocKind.sale:
-          rows.add(LedgerRow(doc.date, 'Satış ${doc.no}', gross, 0));
+          rows.add(LedgerRow(doc.date, 'Satış ${doc.no}', gross, 0, detail: detail, docId: doc.id));
         case DocKind.saleReturn:
-          rows.add(LedgerRow(doc.date, 'Satış iadesi ${doc.no}', 0, gross));
+          rows.add(LedgerRow(doc.date, 'Satış iadesi ${doc.no}', 0, gross, detail: detail, docId: doc.id));
         case DocKind.purchase:
-          rows.add(LedgerRow(doc.date, 'Alış ${doc.no}', 0, gross));
+          rows.add(LedgerRow(doc.date, 'Alış ${doc.no}', 0, gross, detail: detail, docId: doc.id));
         case DocKind.purchaseReturn:
-          rows.add(LedgerRow(doc.date, 'Alış iadesi ${doc.no}', gross, 0));
+          rows.add(LedgerRow(doc.date, 'Alış iadesi ${doc.no}', gross, 0, detail: detail, docId: doc.id));
         default:
           break;
       }
@@ -1119,15 +1163,17 @@ class AppStore extends ChangeNotifier {
     for (final payment in payments) {
       if (payment.partyId != partyId) continue;
       final title = '${payment.direction == PayDirection.inbound ? 'Tahsilat' : 'Ödeme'} ${payment.no}';
+      final detail = paymentDetail(payment);
       if (payment.direction == PayDirection.inbound) {
-        rows.add(LedgerRow(payment.date, title, 0, payment.amount));
+        rows.add(LedgerRow(payment.date, title, 0, payment.amount, detail: detail, paymentId: payment.id));
       } else {
-        rows.add(LedgerRow(payment.date, title, payment.amount, 0));
+        rows.add(LedgerRow(payment.date, title, payment.amount, 0, detail: detail, paymentId: payment.id));
       }
     }
     for (final ticket in tickets) {
       if (ticket.partyId != partyId || !ticket.feeInvoiced || ticket.fee <= 0) continue;
-      rows.add(LedgerRow(ticket.date, 'Servis ${ticket.no}', ticket.fee, 0));
+      final detail = ticket.fault.trim().isEmpty ? ticket.note.trim() : ticket.fault.trim();
+      rows.add(LedgerRow(ticket.date, 'Servis ${ticket.no}', ticket.fee, 0, detail: detail));
     }
     rows.sort((a, b) => a.date.compareTo(b.date));
     return rows;
@@ -1272,6 +1318,23 @@ class AppStore extends ChangeNotifier {
     if (payment.id.isEmpty) payment.id = newId();
     if (payment.no.isEmpty) payment.no = nextPayNo(payment.direction);
     payments.add(payment);
+    _touch();
+    return null;
+  }
+
+  String? updatePayment(Payment payment) {
+    final index = payments.indexWhere((item) => item.id == payment.id);
+    if (index < 0) return 'Kayıt yok';
+    final current = payments[index];
+    if (current.instrumentId.isNotEmpty) return 'Çek ve senet finans ekranından düzeltilir';
+    if (current.groupId.isNotEmpty) return 'Virman iki cariyi birlikte etkiler';
+    if (payment.amount <= 0) return 'Tutar girin';
+    if (accountById(payment.accountId) == null) return 'Hesap seçin';
+    payment
+      ..no = current.no
+      ..instrumentId = ''
+      ..groupId = '';
+    payments[index] = payment;
     _touch();
     return null;
   }

@@ -267,21 +267,31 @@ Future<void> openPaymentDialog(
   String partyId = '',
   String docId = '',
   PayDirection direction = PayDirection.inbound,
+  Payment? existing,
 }) async {
   final store = StoreScope.of(context);
+  if (existing != null && existing.instrumentId.isNotEmpty) {
+    showMessage(context, 'Çek ve senet finans ekranından düzeltilir');
+    return;
+  }
+  if (existing != null && existing.groupId.isNotEmpty) {
+    showMessage(context, 'Virman iki cariyi birlikte etkiler. Yeni virman girin.');
+    return;
+  }
   final usable = store.accounts.where((item) => item.role == AccountRole.cash || item.role == AccountRole.bank).toList();
   if (usable.isEmpty) {
     showMessage(context, 'Kasa veya banka hesabı yok');
     return;
   }
-  var dir = direction;
-  var method = PayMethod.transfer;
-  var accountId = usable.first.id;
-  var selectedParty = partyId;
-  var selectedDoc = docId;
-  final doc = store.docById(docId);
-  final amount = TextEditingController(text: doc == null ? '' : numField(store.docRemaining(doc).abs()));
-  final note = TextEditingController();
+  var dir = existing?.direction ?? direction;
+  var method = existing == null || existing.method == PayMethod.check || existing.method == PayMethod.note ? PayMethod.transfer : existing.method;
+  var accountId = existing != null && usable.any((item) => item.id == existing.accountId) ? existing.accountId : usable.first.id;
+  var selectedParty = existing?.partyId ?? partyId;
+  var selectedDoc = existing?.docId ?? docId;
+  var date = existing?.date ?? DateTime.now();
+  final doc = store.docById(selectedDoc);
+  final amount = TextEditingController(text: existing != null ? numField(existing.amount) : (doc == null ? '' : numField(store.docRemaining(doc).abs())));
+  final note = TextEditingController(text: existing?.note ?? '');
   final saved = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -289,7 +299,7 @@ Future<void> openPaymentDialog(
         final parties = store.parties.where((item) => item.active).toList();
         final docs = store.docs.where((item) => item.partyId == selectedParty && item.status == DocStatus.approved && kindAffectsCari(item.kind)).toList();
         return AlertDialog(
-          title: const Text('Tahsilat / ödeme'),
+          title: Text(existing == null ? 'Tahsilat / ödeme' : 'Kaydı düzelt'),
           content: SizedBox(
             width: 460,
             child: SingleChildScrollView(
@@ -346,9 +356,15 @@ Future<void> openPaymentDialog(
                     onChanged: (value) => setLocal(() => method = value ?? method),
                   ),
                   const SizedBox(height: 8),
+                  DateField(label: 'Tarih', value: date, onChanged: (value) => setLocal(() => date = value)),
+                  const SizedBox(height: 8),
                   TextField(controller: amount, decoration: const InputDecoration(labelText: 'Tutar'), keyboardType: TextInputType.number),
                   const SizedBox(height: 8),
-                  TextField(controller: note, decoration: const InputDecoration(labelText: 'Not')),
+                  TextField(
+                    controller: note,
+                    decoration: const InputDecoration(labelText: 'Açıklama', hintText: 'Ekstre satırında ve Excel çıktısında görünür'),
+                    maxLines: 2,
+                  ),
                 ],
               ),
             ),
@@ -362,21 +378,20 @@ Future<void> openPaymentDialog(
     ),
   );
   if (saved == true && context.mounted) {
-    final message = store.addPayment(
-      Payment(
-        id: '',
-        no: '',
-        date: DateTime.now(),
-        partyId: selectedParty,
-        docId: selectedDoc,
-        accountId: accountId,
-        direction: dir,
-        method: method,
-        amount: parseNum(amount.text) ?? 0,
-        note: note.text.trim(),
-      ),
+    final payment = Payment(
+      id: existing?.id ?? '',
+      no: existing?.no ?? '',
+      date: date,
+      partyId: selectedParty,
+      docId: selectedDoc,
+      accountId: accountId,
+      direction: dir,
+      method: method,
+      amount: parseNum(amount.text) ?? 0,
+      note: note.text.trim(),
     );
-    showMessage(context, message ?? 'Kaydedildi');
+    final message = existing == null ? store.addPayment(payment) : store.updatePayment(payment);
+    showMessage(context, message ?? (existing == null ? 'Kaydedildi' : 'Kayıt düzeltildi'));
   }
   amount.dispose();
   note.dispose();

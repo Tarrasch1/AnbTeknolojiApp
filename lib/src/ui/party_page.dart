@@ -17,12 +17,21 @@ class PartyPage extends StatefulWidget {
   State<PartyPage> createState() => _PartyPageState();
 }
 
-class _PartyPageState extends State<PartyPage> {
+class _PartyPageState extends State<PartyPage> with SingleTickerProviderStateMixin {
   final _search = TextEditingController();
-  String _filter = 'Tümü';
+  late final TabController _kinds = TabController(length: 2, vsync: this);
+
+  @override
+  void initState() {
+    super.initState();
+    _kinds.addListener(() {
+      if (!_kinds.indexIsChanging && mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
+    _kinds.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -31,9 +40,10 @@ class _PartyPageState extends State<PartyPage> {
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
     final query = _search.text.trim().toLowerCase();
+    final customers = _kinds.index == 0;
     final items = store.parties.where((party) {
-      if (_filter == 'Müşteri' && party.type == PartyType.supplier) return false;
-      if (_filter == 'Tedarikçi' && party.type == PartyType.customer) return false;
+      if (customers && party.type == PartyType.supplier) return false;
+      if (!customers && party.type == PartyType.customer) return false;
       if (query.isEmpty) return true;
       return '${party.name} ${party.city} ${party.taxNo} ${party.phone}'.toLowerCase().contains(query);
     }).toList()
@@ -75,19 +85,15 @@ class _PartyPageState extends State<PartyPage> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: ['Tümü', 'Müşteri', 'Tedarikçi'].map((item) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(item),
-                  selected: _filter == item,
-                  onSelected: (_) => setState(() => _filter = item),
-                ),
-              );
-            }).toList(),
+        Material(
+          color: Colors.white,
+          child: TabBar(
+            controller: _kinds,
+            labelColor: kNavy,
+            tabs: const [
+              Tab(text: 'Müşteri'),
+              Tab(text: 'Tedarikçi'),
+            ],
           ),
         ),
         Expanded(
@@ -201,10 +207,11 @@ class PartyDetailPage extends StatelessWidget {
                 InfoLine('Fiyat listesi', list?.name ?? 'Liste fiyatı'),
                 InfoLine('Vade', '${party.termDays} gün'),
                 InfoLine('Risk limiti', party.creditLimit <= 0 ? 'Yok' : money(party.creditLimit)),
-                if (party.note.isNotEmpty) InfoLine('Not', party.note),
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          _PartyNote(note: party.note),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -260,11 +267,32 @@ class PartyDetailPage extends StatelessWidget {
                 icon: row.debit > 0 ? Icons.south_west : Icons.north_east,
                 tone: row.debit > 0 ? kBad : kGood,
                 title: row.title,
-                subtitle: shortDate(row.date),
+                subtitle: row.detail.isEmpty ? shortDate(row.date) : '${shortDate(row.date)}\n${row.detail}',
                 trailing: money(row.debit > 0 ? row.debit : row.credit),
                 trailingColor: row.debit > 0 ? kBad : kGood,
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => StatementPage(partyId: party.id))),
               ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PartyNote extends StatelessWidget {
+  const _PartyNote({required this.note});
+
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = note.trim().isEmpty ? 'Not yok' : note.trim();
+    return HoverCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Not', style: TextStyle(fontWeight: FontWeight.w800, color: kNavy)),
+          const SizedBox(height: 6),
+          Text(text, style: const TextStyle(height: 1.35)),
         ],
       ),
     );
@@ -437,6 +465,7 @@ Future<void> showFirmPanel(BuildContext context, String partyId) {
             _contactTile(Icons.mail_outline, 'E-posta', party.email.isEmpty ? '—' : party.email),
             _contactTile(Icons.location_on_outlined, 'Adres', '${party.address} ${party.city}'.trim().isEmpty ? '—' : '${party.address}, ${party.city}'),
             _contactTile(Icons.sell_outlined, 'Fiyat listesi', list?.name ?? 'Liste fiyatı'),
+            _contactTile(Icons.sticky_note_2_outlined, 'Not', party.note.trim().isEmpty ? 'Not yok' : party.note),
           ],
         ),
         footer: Wrap(

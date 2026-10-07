@@ -5,8 +5,11 @@ import 'package:toptanci_takip/main.dart';
 import 'package:toptanci_takip/src/models.dart';
 import 'package:toptanci_takip/src/store.dart';
 import 'package:toptanci_takip/src/ui/docs_page.dart';
+import 'package:toptanci_takip/src/ui/party_page.dart';
 import 'package:toptanci_takip/src/ui/print_page.dart';
 import 'package:toptanci_takip/src/ui/scope.dart';
+import 'package:toptanci_takip/src/ui/statement_page.dart';
+import 'package:toptanci_takip/src/ui/stock_page.dart';
 import 'package:toptanci_takip/src/ui/theme.dart';
 
 void main() {
@@ -387,6 +390,106 @@ void main() {
     await tester.pump();
     expect(find.text('SF-2026-0001'), findsWidgets);
     expect(find.textContaining('GİB'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('onaylı satış ve tahsilat düzeltilir, ekstrede ürün yazar', () {
+    final store = _bare();
+    final doc = TradeDoc(
+      id: '',
+      kind: DocKind.sale,
+      status: DocStatus.draft,
+      no: '',
+      date: DateTime(2026, 10, 1),
+      dueDate: DateTime(2026, 10, 31),
+      partyId: 'c',
+      warehouseId: 'w',
+      lines: [DocLine(productId: 'p', qty: 1, unitPrice: 200, vatRate: 20)],
+      note: 'Bayi sevkiyatı',
+    );
+    expect(store.addDraft(doc), isNull);
+    expect(store.approveDoc(doc.id), isNull);
+    expect(store.stockOf('p'), 9);
+    final row = store.statement('c').singleWhere((item) => item.docId == doc.id);
+    expect(row.detail, contains('Televizyon'));
+    expect(row.detail, contains('1 adet'));
+    expect(row.detail, contains('Bayi sevkiyatı'));
+    final revised = TradeDoc(
+      id: doc.id,
+      kind: doc.kind,
+      status: DocStatus.approved,
+      no: doc.no,
+      date: doc.date,
+      dueDate: doc.dueDate,
+      partyId: 'c',
+      warehouseId: 'w',
+      lines: [DocLine(productId: 'p', qty: 2, unitPrice: 200, vatRate: 20)],
+    );
+    expect(store.reviseDoc(revised), isNull);
+    expect(store.stockOf('p'), 8);
+    expect(store.partyBalance('c'), closeTo(480, 0.01));
+    final pay = Payment(
+      id: 'pay',
+      no: 'TH-1',
+      date: DateTime(2026, 10, 2),
+      accountId: 'kasa',
+      direction: PayDirection.inbound,
+      method: PayMethod.cash,
+      amount: 100,
+      partyId: 'c',
+      note: 'Elden',
+    );
+    expect(store.addPayment(pay), isNull);
+    pay.amount = 40;
+    pay.note = 'Eksik tahsilat düzeltildi';
+    expect(store.updatePayment(pay), isNull);
+    expect(store.partyBalance('c'), closeTo(440, 0.01));
+    final payRow = store.statement('c').last;
+    expect(payRow.detail, contains('Eksik tahsilat düzeltildi'));
+    expect(payRow.detail, contains('Nakit'));
+  });
+
+  testWidgets('ürün tablosu ve cari sekmeleri taşmadan durur', (tester) async {
+    final store = AppStore(box: MemoryJsonBox());
+    await store.ensureLoaded();
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      StoreScope(
+        store: store,
+        child: MaterialApp(theme: buildAppTheme(), home: const Scaffold(body: StockPage())),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Stok kodu'), findsOneWidget);
+    expect(find.text('Toplam satış bedeli'), findsOneWidget);
+    expect(find.text('Depolar'), findsNothing);
+    expect(find.text('Sayım'), findsNothing);
+    expect(find.text('Seri no'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      StoreScope(
+        store: store,
+        child: MaterialApp(theme: buildAppTheme(), home: const Scaffold(body: PartyPage())),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Müşteri'), findsWidgets);
+    expect(find.text('Tedarikçi'), findsWidgets);
+    expect(find.text('Tümü'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      StoreScope(
+        store: store,
+        child: MaterialApp(theme: buildAppTheme(), home: const StatementPage(partyId: 'c-yildiz')),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Not'), findsOneWidget);
+    expect(find.textContaining('No-Frost'), findsWidgets);
+    expect(find.text('Düzelt'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }
