@@ -3,11 +3,11 @@ const MANIFEST = 'flutter-app-manifest';
 const TEMP = 'flutter-temp-cache';
 const CACHE_NAME = 'flutter-app-cache';
 
-const RESOURCES = {"flutter_bootstrap.js": "59aef617abfc15fc4b97526f8c38f9ed",
+const RESOURCES = {"flutter_bootstrap.js": "0530a79f17930a301cbae947451d4f76",
 "version.json": "9f140a23be1f276f7f5732d18e6dc8c4",
 "index.html": "1665cf23e43a216d5f20f0979ec252be",
 "/": "1665cf23e43a216d5f20f0979ec252be",
-"main.dart.js": "2c95a3bd5edac09d9d6d909a7dd38150",
+"main.dart.js": "3057b326d906bed2ed5db17f1190146f",
 "flutter.js": "f393d3c16b631f36852323de8e583132",
 "favicon.png": "5dcef449791fa27946b3d35ad8803796",
 "icons/Icon-192.png": "ac9a721a12bbc803b44f645561ecb1e1",
@@ -22,7 +22,7 @@ const RESOURCES = {"flutter_bootstrap.js": "59aef617abfc15fc4b97526f8c38f9ed",
 "assets/packages/cupertino_icons/assets/CupertinoIcons.ttf": "e986ebe42ef785b27164c36a9abc7818",
 "assets/shaders/ink_sparkle.frag": "ecc85a2e95f5e9f53123dcaf8cb9b6ce",
 "assets/AssetManifest.bin": "712d1d8fb5474775f542ad9105e128b6",
-"assets/fonts/MaterialIcons-Regular.otf": "2a99f7e8e318b015dd01712ba8b6bc2d",
+"assets/fonts/MaterialIcons-Regular.otf": "d1ab62a447bafa7e4c12018aa6328d71",
 "assets/assets/turkey_provinces.json": "6b4153c1d34139a918ba2d390a66e1b6",
 "canvaskit/skwasm.js": "694fda5704053957c2594de355805228",
 "canvaskit/skwasm.js.symbols": "262f4827a1317abb59d71d6c587a93e2",
