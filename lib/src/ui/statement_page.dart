@@ -145,6 +145,16 @@ class _StatementPageState extends State<StatementPage> {
                 icon: const Icon(Icons.payments_outlined),
                 label: const Text('Tahsilat / ödeme'),
               ),
+              OutlinedButton.icon(
+                onPressed: () => openBulkSettle(context, party.id),
+                icon: const Icon(Icons.playlist_add_check),
+                label: Text(party.type == PartyType.supplier ? 'Toplu ödeme' : 'Toplu tahsilat'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => printReconcile(context, party.id),
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Mutabakat'),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -235,6 +245,13 @@ class _StatementPageState extends State<StatementPage> {
     if (!mounted) return;
     showMessage(context, 'Ekstre Excel olarak indirildi');
   }
+}
+
+Future<void> printReconcile(BuildContext context, String partyId) async {
+  final store = StoreScope.of(context);
+  final party = store.partyById(partyId);
+  if (party == null) return;
+  await launchPrint(reconcileHtml(store, party));
 }
 
 class _Amount extends StatelessWidget {

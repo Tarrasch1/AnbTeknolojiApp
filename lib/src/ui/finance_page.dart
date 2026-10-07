@@ -397,6 +397,86 @@ Future<void> openPaymentDialog(
   note.dispose();
 }
 
+Future<void> openBulkSettle(BuildContext context, String partyId) async {
+  final store = StoreScope.of(context);
+  final open = store.openDocs(partyId);
+  if (open.isEmpty) {
+    showMessage(context, 'Açık fatura yok');
+    return;
+  }
+  final usable = store.accounts.where((item) => item.role == AccountRole.cash || item.role == AccountRole.bank).toList();
+  if (usable.isEmpty) {
+    showMessage(context, 'Kasa veya banka hesabı yok');
+    return;
+  }
+  var accountId = usable.first.id;
+  var date = DateTime.now();
+  final note = TextEditingController();
+  final amounts = {for (final doc in open) doc.id: TextEditingController(text: numField(store.docRemaining(doc)))};
+  final picked = {for (final doc in open) doc.id: true};
+  final sales = open.every((doc) => doc.kind == DocKind.sale);
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) => AlertDialog(
+        title: Text(sales ? 'Toplu tahsilat' : 'Toplu ödeme'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Seçilen her fatura kendi kalanı kadar kapanır. Fazlası yazılamaz.', style: TextStyle(color: kMuted, height: 1.35)),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: accountId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Hesap'),
+                  items: usable.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name))).toList(),
+                  onChanged: (value) => setLocal(() => accountId = value ?? accountId),
+                ),
+                const SizedBox(height: 8),
+                DateField(label: 'Tarih', value: date, onChanged: (value) => setLocal(() => date = value)),
+                const SizedBox(height: 8),
+                TextField(controller: note, decoration: const InputDecoration(labelText: 'Açıklama'), maxLines: 2),
+                const SizedBox(height: 8),
+                for (final doc in open)
+                  CheckboxListTile(
+                    value: picked[doc.id] ?? false,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('${doc.no} · kalan ${money(store.docRemaining(doc))}'),
+                    subtitle: TextField(
+                      controller: amounts[doc.id],
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Tutar'),
+                    ),
+                    onChanged: (value) => setLocal(() => picked[doc.id] = value ?? false),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kaydet')),
+        ],
+      ),
+    ),
+  );
+  if (saved == true && context.mounted) {
+    final lines = <({String docId, double amount})>[
+      for (final doc in open)
+        if (picked[doc.id] == true) (docId: doc.id, amount: parseNum(amounts[doc.id]?.text ?? '') ?? 0),
+    ];
+    final message = store.settleOpenDocs(partyId: partyId, accountId: accountId, date: date, note: note.text, lines: lines);
+    showMessage(context, message ?? 'Faturalar işlendi');
+  }
+  note.dispose();
+  for (final controller in amounts.values) {
+    controller.dispose();
+  }
+}
+
 Future<String?> pickMoneyAccount(BuildContext context) async {
   final store = StoreScope.of(context);
   final usable = store.accounts.where((item) => item.role == AccountRole.cash || item.role == AccountRole.bank).toList();

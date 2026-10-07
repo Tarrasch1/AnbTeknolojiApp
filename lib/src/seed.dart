@@ -14,6 +14,7 @@ void seedDemo(AppStore store) {
     iban: 'TR12 0001 0002 3456 7890 1234 56',
     defaultVat: 20,
     defaultTermDays: 30,
+    monthlyTarget: 2500000,
   );
 
   store.warehouses.addAll([
@@ -373,6 +374,7 @@ void seedDemo(AppStore store) {
     double creditLimit = 0,
     int termDays = 30,
     String address = '',
+    String salesRep = '',
   }) {
     final item = Party(
       id: id,
@@ -387,6 +389,7 @@ void seedDemo(AppStore store) {
       creditLimit: creditLimit,
       termDays: termDays,
       priceListId: priceListId,
+      salesRep: salesRep,
     );
     store.parties.add(item);
     return item;
@@ -404,6 +407,7 @@ void seedDemo(AppStore store) {
     priceListId: 'pl-bayi',
     creditLimit: 750000,
     address: 'Bayrampaşa Sanayi Cad. No:18',
+    salesRep: 'Ayşe Kara',
   );
   party(
     id: 'c-ege',
@@ -418,6 +422,7 @@ void seedDemo(AppStore store) {
     creditLimit: 400000,
     termDays: 45,
     address: 'Karşıyaka İskele Cad. No:7',
+    salesRep: 'Ayşe Kara',
   );
   party(
     id: 'c-anka',
@@ -432,6 +437,7 @@ void seedDemo(AppStore store) {
     creditLimit: 250000,
     termDays: 21,
     address: 'Ostim OSB 1177. Cad.',
+    salesRep: 'Mehmet Usta',
   );
   party(
     id: 'c-kar',
@@ -445,6 +451,7 @@ void seedDemo(AppStore store) {
     priceListId: 'pl-bayi',
     creditLimit: 200000,
     address: 'İlkadım Sanayi Sitesi',
+    salesRep: 'Mehmet Usta',
   );
   party(
     id: 's-arcelik',
@@ -509,6 +516,7 @@ void seedDemo(AppStore store) {
     required String partyId,
     required List<DocLine> lines,
     String note = '',
+    String returnReason = '',
     EDocStatus eDoc = EDocStatus.none,
     bool approve = true,
   }) {
@@ -523,6 +531,7 @@ void seedDemo(AppStore store) {
       warehouseId: 'w-merkez',
       lines: lines,
       note: note,
+      returnReason: returnReason,
       eDoc: eDoc,
     );
     final draftError = store.addDraft(doc);
@@ -663,6 +672,7 @@ void seedDemo(AppStore store) {
     due: DateTime(2026, 10, 3),
     partyId: 'c-yildiz',
     note: 'SF-2026-0005 ütü iadesi, kutu hasarlı',
+    returnReason: 'Kutu hasarlı',
     lines: [line('p13', 1, 1750)],
   );
   make(

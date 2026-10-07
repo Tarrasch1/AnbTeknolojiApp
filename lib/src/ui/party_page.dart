@@ -151,6 +151,14 @@ class PartyDetailPage extends StatelessWidget {
     final balance = store.partyBalance(party.id);
     final rows = store.statement(party.id);
     final list = store.priceListById(party.priceListId);
+    final lastPay = store.lastCashMovement(party.id);
+    final lastLabel = lastPay != null
+        ? (lastPay.direction == PayDirection.inbound ? 'Son tahsilat' : 'Son ödeme')
+        : party.type == PartyType.supplier
+            ? 'Son ödeme'
+            : party.type == PartyType.both
+                ? 'Son hareket'
+                : 'Son tahsilat';
     final tone = partyTone(party.type);
     return Scaffold(
       appBar: AppBar(
@@ -207,6 +215,12 @@ class PartyDetailPage extends StatelessWidget {
                 InfoLine('Fiyat listesi', list?.name ?? 'Liste fiyatı'),
                 InfoLine('Vade', '${party.termDays} gün'),
                 InfoLine('Risk limiti', party.creditLimit <= 0 ? 'Yok' : money(party.creditLimit)),
+                InfoLine('Plasiyer', party.salesRep.trim().isEmpty ? '—' : party.salesRep.trim()),
+                InfoLine('Son mutabakat', party.reconciledOn == null ? 'Yok' : shortDate(party.reconciledOn!)),
+                InfoLine(
+                  lastLabel,
+                  lastPay == null ? 'Yok' : '${shortDate(lastPay.date)} · ${money(lastPay.amount)} · ${payMethodLabel(lastPay.method)}',
+                ),
               ],
             ),
           ),
@@ -254,8 +268,98 @@ class PartyDetailPage extends StatelessWidget {
                   icon: const Icon(Icons.sell_outlined),
                   label: const Text('Özel fiyat'),
                 ),
+              OutlinedButton.icon(
+                onPressed: () => openBulkSettle(context, party.id),
+                icon: const Icon(Icons.playlist_add_check),
+                label: Text(party.type == PartyType.supplier ? 'Toplu ödeme' : 'Toplu tahsilat'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => printReconcile(context, party.id),
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Mutabakat'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => showMessage(context, store.markReconciled(party.id) ?? 'Mutabakat tarihi işlendi'),
+                icon: const Icon(Icons.event_available_outlined),
+                label: const Text('Mutabık kalındı'),
+              ),
             ],
           ),
+          const SectionTitle('Görüşmeler'),
+          const Text('Arama, söz ve not tarihli durur. Karttaki tek not bunların yerine geçmez.', style: TextStyle(color: kMuted)),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: () => _addCall(context, party.id),
+              icon: const Icon(Icons.add_call),
+              label: const Text('Görüşme'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (store.partyCalls(party.id).isEmpty)
+            const EmptyHint('Görüşme yok.')
+          else
+            for (final call in store.partyCalls(party.id))
+              HoverCard(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${callKindLabel(call.kind)} · ${shortDate(call.date)}', style: const TextStyle(fontWeight: FontWeight.w800, color: kNavy)),
+                          const SizedBox(height: 4),
+                          Text(call.text, style: const TextStyle(height: 1.35)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Sil',
+                      onPressed: () => store.removeCall(call.id),
+                      icon: const Icon(Icons.delete_outline, color: kBad),
+                    ),
+                  ],
+                ),
+              ),
+          const SectionTitle('Arama planı'),
+          const Text('Günü gelen plan özette görünür. İleri tarihli plan burada bekler.', style: TextStyle(color: kMuted)),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: () => _addVisit(context, party.id),
+              icon: const Icon(Icons.event_available_outlined),
+              label: const Text('Plan ekle'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (store.partyVisits(party.id).isEmpty)
+            const EmptyHint('Arama veya ziyaret planı yok.')
+          else
+            for (final plan in store.partyVisits(party.id))
+              HoverCard(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${visitKindLabel(plan.kind)} · ${shortDate(plan.date)}${plan.done ? ' · Tamam' : ''}',
+                            style: const TextStyle(fontWeight: FontWeight.w800, color: kNavy),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(plan.text, style: const TextStyle(height: 1.35)),
+                        ],
+                      ),
+                    ),
+                    if (!plan.done) TextButton(onPressed: () => store.completeVisit(plan.id), child: const Text('Tamam')),
+                  ],
+                ),
+              ),
           const SectionTitle('Son hareketler'),
           const Text('Tam borç, alacak ve bakiye dökümü ekstrede.', style: TextStyle(color: kMuted)),
           const SizedBox(height: 8),
@@ -297,6 +401,106 @@ class _PartyNote extends StatelessWidget {
       ),
     );
   }
+}
+
+Future<void> _addVisit(BuildContext context, String partyId) async {
+  final store = StoreScope.of(context);
+  var kind = VisitKind.call;
+  var date = DateTime.now();
+  final text = TextEditingController();
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) => AlertDialog(
+        title: const Text('Arama planı'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final item in VisitKind.values)
+                    ChoiceChip(
+                      label: Text(visitKindLabel(item)),
+                      selected: kind == item,
+                      onSelected: (_) => setLocal(() => kind = item),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              DateField(label: 'Tarih', value: date, onChanged: (value) => setLocal(() => date = value)),
+              const SizedBox(height: 8),
+              TextField(controller: text, decoration: const InputDecoration(labelText: 'Ne için'), maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kaydet')),
+        ],
+      ),
+    ),
+  );
+  if (saved == true && context.mounted) {
+    showMessage(
+      context,
+      store.addVisit(VisitPlan(id: '', partyId: partyId, date: date, kind: kind, text: text.text)) ?? 'Plan kaydedildi',
+    );
+  }
+  text.dispose();
+}
+
+Future<void> _addCall(BuildContext context, String partyId) async {
+  final store = StoreScope.of(context);
+  var kind = CallKind.call;
+  var date = DateTime.now();
+  final text = TextEditingController();
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) => AlertDialog(
+        title: const Text('Görüşme'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final item in CallKind.values)
+                    ChoiceChip(
+                      label: Text(callKindLabel(item)),
+                      selected: kind == item,
+                      onSelected: (_) => setLocal(() => kind = item),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              DateField(label: 'Tarih', value: date, onChanged: (value) => setLocal(() => date = value)),
+              const SizedBox(height: 8),
+              TextField(controller: text, decoration: const InputDecoration(labelText: 'Ne konuşuldu'), maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Kaydet')),
+        ],
+      ),
+    ),
+  );
+  if (saved == true && context.mounted) {
+    showMessage(
+      context,
+      store.addCall(PartyCall(id: '', partyId: partyId, date: date, kind: kind, text: text.text)) ?? 'Görüşme kaydedildi',
+    );
+  }
+  text.dispose();
 }
 
 Future<void> _specialPrice(BuildContext context, String partyId) async {
@@ -466,6 +670,11 @@ Future<void> showFirmPanel(BuildContext context, String partyId) {
             _contactTile(Icons.location_on_outlined, 'Adres', '${party.address} ${party.city}'.trim().isEmpty ? '—' : '${party.address}, ${party.city}'),
             _contactTile(Icons.sell_outlined, 'Fiyat listesi', list?.name ?? 'Liste fiyatı'),
             _contactTile(Icons.sticky_note_2_outlined, 'Not', party.note.trim().isEmpty ? 'Not yok' : party.note),
+            _contactTile(
+              Icons.add_call,
+              'Son görüşme',
+              store.partyCalls(party.id).isEmpty ? 'Yok' : '${callKindLabel(store.partyCalls(party.id).first.kind)} · ${store.partyCalls(party.id).first.text}',
+            ),
           ],
         ),
         footer: Wrap(
@@ -557,6 +766,7 @@ Future<void> _editParty(BuildContext context, Party? existing) async {
   final limit = TextEditingController(text: numField(existing?.creditLimit ?? 0));
   final term = TextEditingController(text: '${existing?.termDays ?? store.profile.defaultTermDays}');
   final note = TextEditingController(text: existing?.note ?? '');
+  final salesRep = TextEditingController(text: existing?.salesRep ?? '');
   var type = existing?.type ?? PartyType.customer;
   var priceListId = existing?.priceListId ?? '';
   var active = existing?.active ?? true;
@@ -666,6 +876,8 @@ Future<void> _editParty(BuildContext context, Party? existing) async {
                     title: const Text('Aktif'),
                     contentPadding: EdgeInsets.zero,
                   ),
+                  TextField(controller: salesRep, decoration: const InputDecoration(labelText: 'Plasiyer')),
+                  const SizedBox(height: 10),
                   TextField(controller: note, decoration: const InputDecoration(labelText: 'Risk / not'), maxLines: 2),
                 ],
               ),
@@ -693,6 +905,8 @@ Future<void> _editParty(BuildContext context, Party? existing) async {
         priceListId: priceListId,
         note: note.text.trim(),
         active: active,
+        salesRep: salesRep.text.trim(),
+        reconciledOn: existing?.reconciledOn,
       ),
     );
   } else if (saved == true && context.mounted) {
@@ -709,4 +923,5 @@ Future<void> _editParty(BuildContext context, Party? existing) async {
   limit.dispose();
   term.dispose();
   note.dispose();
+  salesRep.dispose();
 }

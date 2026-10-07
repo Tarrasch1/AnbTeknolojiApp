@@ -24,6 +24,7 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  var _extended = true;
   final _search = TextEditingController();
 
   static const _titles = [
@@ -61,6 +62,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final store = StoreScope.of(context);
+    final palette = context.palette;
     final wide = MediaQuery.sizeOf(context).width >= 1080;
     const pages = [
       DashboardPage(),
@@ -76,89 +78,104 @@ class _HomeShellState extends State<HomeShell> {
     ];
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            const MarkBadge(label: 'AK', color: kNavy, icon: Icons.bolt, size: 36),
-            const SizedBox(width: 10),
-            Expanded(child: Text('${store.profile.shortName} · ${_titles[_index]}')),
-          ],
-        ),
+        title: Text(_titles[_index]),
         actions: [
+          IconButton(
+            onPressed: () => ThemeScope.of(context).toggle(),
+            icon: Icon(ThemeScope.of(context).isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
+            tooltip: 'Koyu zemin',
+          ),
           IconButton(onPressed: () => _openSearch(context), icon: const Icon(Icons.search), tooltip: 'Ara'),
+          const SizedBox(width: 4),
         ],
       ),
       drawer: wide
           ? null
           : Drawer(
-              child: SafeArea(
-                child: ListView(
+              backgroundColor: palette.sidebar,
+              child: _sidebar(store.profile.shortName, palette, extended: true, showCollapse: false, closeDrawer: true),
+            ),
+      body: Row(
+        children: [
+          if (wide) _sidebar(store.profile.shortName, palette, extended: _extended, showCollapse: true, closeDrawer: false),
+          Expanded(child: IndexedStack(index: _index, children: pages)),
+        ],
+      ),
+    );
+  }
+
+  Widget _sidebar(
+    String shortName,
+    AppPalette palette, {
+    required bool extended,
+    required bool showCollapse,
+    required bool closeDrawer,
+  }) {
+    return ColoredBox(
+      color: palette.sidebar,
+      child: SafeArea(
+        child: SizedBox(
+          width: extended ? 248 : 76,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(extended ? 16 : 12, 16, 12, 12),
+                child: Row(
                   children: [
-                    const DrawerHeader(
-                      decoration: BoxDecoration(color: kNavy),
-                      child: Align(
-                        alignment: Alignment.bottomLeft,
-                        child: Text('Akım Elektrik', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+                    const MarkBadge(label: 'AK', color: kAccent, icon: Icons.bolt, size: 40),
+                    if (extended) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(shortName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                            const Text('Toptan panel', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12)),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  children: [
                     for (var i = 0; i < _titles.length; i++)
-                      ListTile(
-                        leading: Icon(_icons[i]),
-                        title: Text(_titles[i]),
-                        selected: _index == i,
-                        onTap: () {
-                          setState(() => _index = i);
-                          Navigator.pop(context);
-                        },
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: _NavButton(
+                          icon: _icons[i],
+                          label: _titles[i],
+                          selected: _index == i,
+                          extended: extended,
+                          palette: palette,
+                          onTap: () {
+                            setState(() => _index = i);
+                            if (closeDrawer) Navigator.pop(context);
+                          },
+                        ),
                       ),
                   ],
                 ),
               ),
-            ),
-      body: Row(
-        children: [
-          if (wide)
-            DecoratedBox(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(right: BorderSide(color: kLine)),
-              ),
-              child: SizedBox(
-                width: 220,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return SingleChildScrollView(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                        child: IntrinsicHeight(
-                          child: NavigationRail(
-                            extended: true,
-                            minExtendedWidth: 220,
-                            selectedIndex: _index,
-                            onDestinationSelected: (value) => setState(() => _index = value),
-                            leading: const Padding(
-                              padding: EdgeInsets.fromLTRB(12, 16, 12, 8),
-                              child: Row(
-                                children: [
-                                  MarkBadge(label: 'AK', color: kNavy, icon: Icons.bolt, size: 40),
-                                  SizedBox(width: 10),
-                                  Text('AKIM', style: TextStyle(color: kNavy, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-                                ],
-                              ),
-                            ),
-                            destinations: [
-                              for (var i = 0; i < _titles.length; i++)
-                                NavigationRailDestination(icon: Icon(_icons[i]), label: Text(_titles[i])),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+              if (showCollapse)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                  child: _NavButton(
+                    icon: extended ? Icons.keyboard_double_arrow_left : Icons.keyboard_double_arrow_right,
+                    label: extended ? 'Daralt' : '',
+                    selected: false,
+                    extended: extended,
+                    palette: palette,
+                    onTap: () => setState(() => _extended = !_extended),
+                  ),
                 ),
-              ),
-            ),
-          Expanded(child: IndexedStack(index: _index, children: pages)),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -222,5 +239,58 @@ class _HomeShellState extends State<HomeShell> {
         return;
     }
     Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  }
+}
+
+class _NavButton extends StatelessWidget {
+  const _NavButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.extended,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final bool extended;
+  final AppPalette palette;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : palette.sidebarMuted;
+    final button = Material(
+      color: selected ? palette.accent : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: extended ? 12 : 0, vertical: 10),
+          child: Row(
+            mainAxisAlignment: extended ? MainAxisAlignment.start : MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: selected ? Colors.white : color, size: 20),
+              if (extended && label.isNotEmpty) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: selected ? Colors.white : palette.onSidebar, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (extended || label.isEmpty) return button;
+    return Tooltip(message: label, child: button);
   }
 }

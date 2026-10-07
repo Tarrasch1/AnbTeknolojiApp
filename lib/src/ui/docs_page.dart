@@ -121,7 +121,7 @@ class _DocListState extends State<_DocList> {
       if (!widget.kinds.contains(doc.kind)) return false;
       if (_status != null && doc.status != _status) return false;
       if (query.isEmpty) return true;
-      return '${doc.no} ${store.partyName(doc.partyId)}'.toLowerCase().contains(query);
+      return store.docMatchesQuery(doc, query);
     }).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     return Column(
@@ -135,7 +135,7 @@ class _DocListState extends State<_DocList> {
                   Expanded(
                     child: TextField(
                       controller: _search,
-                      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Belge no veya cari'),
+                      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Belge no, cari, not veya ürün'),
                       onChanged: (_) => setState(() {}),
                     ),
                   ),
@@ -225,7 +225,7 @@ bool _sellsToParty(DocKind kind) {
 }
 
 String _approveNote(AppStore store, TradeDoc doc) {
-  final notes = [...store.stockWarnings(doc), ...store.marginWarnings(doc), ...store.limitWarnings(doc)];
+  final notes = [...store.marginWarnings(doc), ...store.limitWarnings(doc)];
   if (notes.isEmpty) return 'Onaylandı';
   return 'Onaylandı. ${notes.join(' | ')}';
 }
@@ -407,8 +407,23 @@ class DocDetailPage extends StatelessWidget {
               ],
             ),
           ),
-          if (doc.kind == DocKind.saleWaybill || doc.kind == DocKind.purchaseWaybill) ...[
+          if (doc.returnReason.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            HoverCard(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.assignment_return_outlined, color: kWarn, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('İade nedeni: ${doc.returnReason.trim()}', style: const TextStyle(height: 1.35))),
+                ],
+              ),
+            ),
+          ],
+          if (doc.kind == DocKind.sale || doc.kind == DocKind.saleWaybill || doc.kind == DocKind.purchaseWaybill) ...[
             const SectionTitle('Teslim'),
+            const Text('Teslim edildi işaretlenince sevkiyat listesinden düşer.', style: TextStyle(color: kMuted)),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -728,6 +743,7 @@ class _DocEditorState extends State<DocEditor> {
   late DateTime _due;
   late List<DocLine> _lines;
   late final TextEditingController _note;
+  late final TextEditingController _reason;
   late final TextEditingController _shipping;
   late final TextEditingController _ship;
   String? _id;
@@ -748,6 +764,7 @@ class _DocEditorState extends State<DocEditor> {
     _due = widget.draft?.dueDate ?? _date.add(Duration(days: party?.termDays ?? store.profile.defaultTermDays));
     _lines = base?.lines.map((line) => line.copy()).toList() ?? <DocLine>[];
     _note = TextEditingController(text: widget.draft?.note ?? (widget.prefill == null || widget.asCopy ? '' : '${widget.prefill!.no} kaynaklı'));
+    _reason = TextEditingController(text: base?.returnReason ?? '');
     _shipping = TextEditingController(text: numField(base?.shipping ?? 0));
     _ship = TextEditingController(text: base?.shipAddress ?? '');
     _id = widget.asCopy ? null : widget.draft?.id;
@@ -760,6 +777,7 @@ class _DocEditorState extends State<DocEditor> {
   void dispose() {
     if (_ready) {
       _note.dispose();
+      _reason.dispose();
       _shipping.dispose();
       _ship.dispose();
     }
@@ -837,6 +855,10 @@ class _DocEditorState extends State<DocEditor> {
           ),
           const SizedBox(height: 10),
           TextField(controller: _note, decoration: const InputDecoration(labelText: 'Belge notu')),
+          if (widget.kind == DocKind.saleReturn || widget.kind == DocKind.purchaseReturn) ...[
+            const SizedBox(height: 10),
+            TextField(controller: _reason, decoration: const InputDecoration(labelText: 'İade nedeni')),
+          ],
         ],
       ),
     );
@@ -1067,6 +1089,7 @@ class _DocEditorState extends State<DocEditor> {
       warehouseId: _warehouseId,
       lines: _lines.map((line) => line.copy()).toList(),
       note: _note.text.trim(),
+      returnReason: _reason.text.trim(),
       shipping: parseNum(_shipping.text) ?? 0,
       sourceDocId: _sourceId,
       shipAddress: _ship.text.trim(),

@@ -41,6 +41,30 @@ class PrefsJsonBox implements JsonBox {
   }
 }
 
+class CollectionRow {
+  CollectionRow({required this.party, required this.remaining, required this.docs});
+
+  final Party party;
+  final double remaining;
+  final List<TradeDoc> docs;
+}
+
+class StockAge {
+  StockAge({required this.product, required this.onHand, required this.lastIn, required this.days});
+
+  final Product product;
+  final double onHand;
+  final DateTime? lastIn;
+  final int? days;
+}
+
+class DormantParty {
+  DormantParty({required this.party, required this.lastSale});
+
+  final Party party;
+  final DateTime? lastSale;
+}
+
 class SlowItem {
   SlowItem({required this.product, required this.onHand, required this.lastSale});
 
@@ -86,6 +110,9 @@ class AppStore extends ChangeNotifier {
   final payments = <Payment>[];
   final instruments = <Instrument>[];
   final tickets = <ServiceTicket>[];
+  final calls = <PartyCall>[];
+  final priceChanges = <PriceChange>[];
+  final visits = <VisitPlan>[];
 
   String newId() => '${DateTime.now().microsecondsSinceEpoch}-${_seq++}';
 
@@ -141,6 +168,9 @@ class AppStore extends ChangeNotifier {
     payments.clear();
     instruments.clear();
     tickets.clear();
+    calls.clear();
+    priceChanges.clear();
+    visits.clear();
   }
 
   Map<String, dynamic> toJson() => {
@@ -158,6 +188,9 @@ class AppStore extends ChangeNotifier {
         'payments': payments.map((e) => e.toJson()).toList(),
         'instruments': instruments.map((e) => e.toJson()).toList(),
         'tickets': tickets.map((e) => e.toJson()).toList(),
+        'calls': calls.map((e) => e.toJson()).toList(),
+        'priceChanges': priceChanges.map((e) => e.toJson()).toList(),
+        'visits': visits.map((e) => e.toJson()).toList(),
       };
 
   String exportJson() => const JsonEncoder.withIndent('  ').convert(toJson());
@@ -201,6 +234,16 @@ class AppStore extends ChangeNotifier {
     for (final item in json['tickets'] as List? ?? const []) {
       tickets.add(ServiceTicket.fromJson(item as Map<String, dynamic>));
     }
+    for (final item in json['calls'] as List? ?? const []) {
+      calls.add(PartyCall.fromJson(item as Map<String, dynamic>));
+    }
+    for (final item in json['priceChanges'] as List? ?? const []) {
+      priceChanges.add(PriceChange.fromJson(item as Map<String, dynamic>));
+    }
+    for (final item in json['visits'] as List? ?? const []) {
+      visits.add(VisitPlan.fromJson(item as Map<String, dynamic>));
+    }
+    _freezeMissingCosts();
   }
 
   String? importJson(String raw) {
@@ -373,6 +416,8 @@ class AppStore extends ChangeNotifier {
     if (product.id.isEmpty) product.id = newId();
     final index = products.indexWhere((item) => item.id == product.id);
     if (index >= 0) {
+      final prev = products[index];
+      _rememberPrice(product.id, prev.purchasePrice, product.purchasePrice, prev.salePrice, product.salePrice);
       products[index] = product;
     } else {
       products.add(product);
@@ -453,6 +498,126 @@ class AppStore extends ChangeNotifier {
   void removeSpecialPrice(String partyId, String productId) {
     specialPrices.removeWhere((item) => item.partyId == partyId && item.productId == productId);
     _touch();
+  }
+
+  List<TradeDoc> openSaleOrders() {
+    return docs.where((doc) => doc.kind == DocKind.saleOrder && doc.status == DocStatus.approved).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  List<TradeDoc> openPurchaseOrders() {
+    return docs.where((doc) => doc.kind == DocKind.purchaseOrder && doc.status == DocStatus.approved).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  List<TradeDoc> staleQuotes({int days = 15}) {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    return docs.where((doc) {
+      if (doc.kind != DocKind.saleQuote || doc.status != DocStatus.approved) return false;
+      final issued = DateTime(doc.date.year, doc.date.month, doc.date.day);
+      return day.difference(issued).inDays >= days;
+    }).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  List<StockAge> stockAges() {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    final last = <String, DateTime>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved && doc.status != DocStatus.invoiced) continue;
+      if (doc.kind != DocKind.purchase && doc.kind != DocKind.purchaseWaybill) continue;
+      for (final line in doc.lines) {
+        final prev = last[line.productId];
+        if (prev == null || doc.date.isAfter(prev)) last[line.productId] = doc.date;
+      }
+    }
+    final rows = <StockAge>[];
+    for (final product in products) {
+      if (!product.active) continue;
+      final onHand = stockOf(product.id);
+      if (onHand <= 0.0001) continue;
+      final inbound = last[product.id];
+      final age = inbound == null ? null : day.difference(DateTime(inbound.year, inbound.month, inbound.day)).inDays;
+      rows.add(StockAge(product: product, onHand: onHand, lastIn: inbound, days: age));
+    }
+    rows.sort((a, b) => (b.days ?? 100000).compareTo(a.days ?? 100000));
+    return rows;
+  }
+
+  List<({Product product, double sold, double returned, double rate})> returnRates({DateTime? from, DateTime? to, int limit = 10}) {
+    final sold = <String, double>{};
+    final returned = <String, double>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
+      for (final line in doc.lines) {
+        if (doc.kind == DocKind.sale) {
+          sold[line.productId] = (sold[line.productId] ?? 0) + line.qty;
+        } else {
+          returned[line.productId] = (returned[line.productId] ?? 0) + line.qty;
+        }
+      }
+    }
+    final rows = <({Product product, double sold, double returned, double rate})>[];
+    for (final entry in sold.entries) {
+      if (entry.value <= 0.0001) continue;
+      final back = returned[entry.key] ?? 0;
+      if (back <= 0.0001) continue;
+      final product = productById(entry.key);
+      if (product == null) continue;
+      rows.add((product: product, sold: entry.value, returned: back, rate: round2(back / entry.value * 100)));
+    }
+    rows.sort((a, b) => b.rate.compareTo(a.rate));
+    if (rows.length > limit) return rows.sublist(0, limit);
+    return rows;
+  }
+
+  List<({CashAccount account, double inbound, double outbound, List<Payment> lines})> cashClose({DateTime? day}) {
+    final today = day ?? DateTime.now();
+    final stamp = DateTime(today.year, today.month, today.day);
+    final rows = <({CashAccount account, double inbound, double outbound, List<Payment> lines})>[];
+    for (final account in accounts) {
+      if (account.role != AccountRole.cash && account.role != AccountRole.bank) continue;
+      final lines = <Payment>[];
+      var inbound = 0.0;
+      var outbound = 0.0;
+      for (final payment in payments) {
+        if (payment.accountId != account.id) continue;
+        final paid = DateTime(payment.date.year, payment.date.month, payment.date.day);
+        if (paid != stamp) continue;
+        lines.add(payment);
+        if (payment.direction == PayDirection.inbound) {
+          inbound += payment.amount;
+        } else {
+          outbound += payment.amount;
+        }
+      }
+      if (lines.isEmpty) continue;
+      lines.sort((a, b) => a.date.compareTo(b.date));
+      rows.add((account: account, inbound: round2(inbound), outbound: round2(outbound), lines: lines));
+    }
+    return rows;
+  }
+
+  List<TradeDoc> duePromises() {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    return docs.where((doc) {
+      if (doc.kind != DocKind.sale || doc.status != DocStatus.approved || doc.promiseDate == null) return false;
+      if (docRemaining(doc) <= 0.009) return false;
+      final promised = DateTime(doc.promiseDate!.year, doc.promiseDate!.month, doc.promiseDate!.day);
+      return !promised.isAfter(day);
+    }).toList()
+      ..sort((a, b) => a.promiseDate!.compareTo(b.promiseDate!));
+  }
+
+  String orderBrief(TradeDoc doc) {
+    if (doc.lines.isEmpty) return 'Kalem yok';
+    final parts = doc.lines.take(3).map((line) => '${productName(line.productId)} ${qtyText(line.qty)}');
+    final extra = doc.lines.length > 3 ? ' +${doc.lines.length - 3}' : '';
+    return '${parts.join(', ')}$extra';
   }
 
   List<TradeDoc> openWaybills() {
@@ -541,10 +706,16 @@ class AppStore extends ChangeNotifier {
     if (doc.status == DocStatus.approved || doc.status == DocStatus.invoiced) return null;
     if (doc.status == DocStatus.cancelled) return 'İptal edilmiş belge onaylanamaz';
     if (doc.lines.isEmpty) return 'Kalem yok';
-    doc.status = DocStatus.approved;
+    if (_needsReturnReason(doc) && doc.returnReason.trim().isEmpty) return 'İade nedeni yazın';
     final source = doc.sourceDocId.isEmpty ? null : docById(doc.sourceDocId);
     final coveredByWaybill = source != null &&
         (source.kind == DocKind.saleWaybill || source.kind == DocKind.purchaseWaybill);
+    if (!coveredByWaybill) {
+      final blocked = stockWarnings(doc);
+      if (blocked.isNotEmpty) return blocked.join(' · ');
+    }
+    _stampSaleCost(doc);
+    doc.status = DocStatus.approved;
     if (kindAffectsStock(doc.kind) && !doc.stockPosted && !coveredByWaybill) {
       _postStock(doc, reverse: false);
       doc.stockPosted = true;
@@ -590,9 +761,18 @@ class AppStore extends ChangeNotifier {
     if (doc.warehouseId.isEmpty) return 'Depo seçin';
     if (doc.lines.isEmpty) return 'En az bir kalem ekleyin';
     if (doc.lines.any((line) => line.qty <= 0)) return 'Miktar sıfırdan büyük olmalı';
+    if (_needsReturnReason(doc) && doc.returnReason.trim().isEmpty) return 'İade nedeni yazın';
     final spawned = docs.any((item) => item.sourceDocId == current.id && item.status != DocStatus.cancelled);
     if (spawned) return 'Bu belgeye bağlı fatura varken düzeltilemez';
     final posted = current.stockPosted;
+    if (posted && kindAffectsStock(doc.kind) && !kindIsInbound(doc.kind)) {
+      final extra = <String, double>{};
+      for (final line in current.lines) {
+        extra[line.productId] = (extra[line.productId] ?? 0) + line.qty;
+      }
+      final blocked = stockWarnings(doc, extraFree: extra);
+      if (blocked.isNotEmpty) return blocked.join(' · ');
+    }
     if (posted) _postStock(current, reverse: true);
     doc
       ..status = DocStatus.approved
@@ -602,6 +782,7 @@ class AppStore extends ChangeNotifier {
       ..eDoc = current.eDoc
       ..promiseDate = current.promiseDate;
     docs[index] = doc;
+    _stampSaleCost(doc);
     if (posted) _postStock(doc, reverse: false);
     _touch();
     return null;
@@ -613,6 +794,7 @@ class AppStore extends ChangeNotifier {
         '${productName(line.productId)} ${qtyText(line.qty)} adet × ${money(line.unitPrice)} = ${money(line.gross)}',
     ];
     if (doc.note.trim().isNotEmpty) parts.add(doc.note.trim());
+    if (doc.returnReason.trim().isNotEmpty) parts.add('İade nedeni: ${doc.returnReason.trim()}');
     return parts.join('\n');
   }
 
@@ -875,13 +1057,14 @@ class AppStore extends ChangeNotifier {
     return changes;
   }
 
-  List<String> stockWarnings(TradeDoc doc) {
+  List<String> stockWarnings(TradeDoc doc, {Map<String, double> extraFree = const {}}) {
     if (!kindAffectsStock(doc.kind) || kindIsInbound(doc.kind)) return const [];
     final warnings = <String>[];
     for (final line in doc.lines) {
       final onHand = stockOf(line.productId, warehouseId: doc.warehouseId);
       final reserved = reservedOf(line.productId, warehouseId: doc.warehouseId, exceptDocId: doc.sourceDocId);
-      final free = ((onHand - reserved) * 1000).roundToDouble() / 1000.0;
+      final bonus = extraFree[line.productId] ?? 0;
+      final free = ((onHand - reserved + bonus) * 1000).roundToDouble() / 1000.0;
       if (free + 0.0001 < line.qty) {
         final name = productName(line.productId);
         warnings.add(
@@ -894,13 +1077,220 @@ class AppStore extends ChangeNotifier {
     return warnings;
   }
 
+  double openOrderExposure(String partyId, {String exceptDocId = ''}) {
+    var total = 0.0;
+    for (final doc in docs) {
+      if (doc.id == exceptDocId) continue;
+      if (doc.partyId != partyId || doc.kind != DocKind.saleOrder || doc.status != DocStatus.approved) continue;
+      total += doc.gross;
+    }
+    return round2(total);
+  }
+
   List<String> limitWarnings(TradeDoc doc) {
     if (doc.kind != DocKind.sale) return const [];
     final party = partyById(doc.partyId);
     if (party == null || party.creditLimit <= 0) return const [];
-    final next = partyBalance(party.id) + doc.gross;
+    final orders = openOrderExposure(party.id, exceptDocId: doc.sourceDocId);
+    final next = partyBalance(party.id) + orders + doc.gross;
     if (next <= party.creditLimit + 0.009) return const [];
-    return ['${party.name}: limit ${money(party.creditLimit)}, belge sonrası ${money(next)}'];
+    final orderText = orders > 0.009 ? ', açık sipariş ${money(orders)}' : '';
+    return ['${party.name}: limit ${money(party.creditLimit)}$orderText, belge sonrası ${money(next)}'];
+  }
+
+  List<({Party party, double balance, double over})> overLimitParties() {
+    final rows = <({Party party, double balance, double over})>[];
+    for (final party in parties) {
+      if (!party.active || party.type == PartyType.supplier || party.creditLimit <= 0) continue;
+      final balance = partyBalance(party.id);
+      if (balance <= party.creditLimit + 0.009) continue;
+      rows.add((party: party, balance: round2(balance), over: round2(balance - party.creditLimit)));
+    }
+    rows.sort((a, b) => b.over.compareTo(a.over));
+    return rows;
+  }
+
+  List<Party> reconcileQueue({int days = 30}) {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    final rows = <Party>[];
+    for (final party in parties) {
+      if (!party.active) continue;
+      if (partyBalance(party.id).abs() <= 0.009) continue;
+      final agreed = party.reconciledOn;
+      if (agreed != null) {
+        final when = DateTime(agreed.year, agreed.month, agreed.day);
+        if (day.difference(when).inDays < days) continue;
+      }
+      rows.add(party);
+    }
+    rows.sort((a, b) => partyBalance(b.id).abs().compareTo(partyBalance(a.id).abs()));
+    return rows;
+  }
+
+  List<({String name, double days, int customers, int invoices})> repCollectionDays() {
+    final grouped = <String, ({double weighted, int customers, int invoices})>{};
+    for (final row in collectionDays()) {
+      final rep = row.party.salesRep.trim();
+      final name = rep.isEmpty ? 'Plasiyersiz' : rep;
+      final prev = grouped[name] ?? (weighted: 0.0, customers: 0, invoices: 0);
+      grouped[name] = (
+        weighted: prev.weighted + row.days * row.invoices,
+        customers: prev.customers + 1,
+        invoices: prev.invoices + row.invoices,
+      );
+    }
+    final rows = <({String name, double days, int customers, int invoices})>[];
+    for (final entry in grouped.entries) {
+      final invoices = entry.value.invoices;
+      if (invoices <= 0) continue;
+      rows.add((
+        name: entry.key,
+        days: entry.value.weighted / invoices,
+        customers: entry.value.customers,
+        invoices: invoices,
+      ));
+    }
+    rows.sort((a, b) => b.days.compareTo(a.days));
+    return rows;
+  }
+
+  List<({Product product, PriceChange change})> costJumps({double percent = 10}) {
+    final rows = <({Product product, PriceChange change})>[];
+    for (final product in products) {
+      PriceChange? latest;
+      for (final change in priceHistory(product.id)) {
+        if ((change.oldPurchase - change.newPurchase).abs() < 0.009) continue;
+        latest = change;
+        break;
+      }
+      if (latest == null || latest.oldPurchase <= 0.009) continue;
+      final ratio = (latest.newPurchase - latest.oldPurchase) / latest.oldPurchase * 100;
+      if (ratio + 0.009 < percent) continue;
+      rows.add((product: product, change: latest));
+    }
+    rows.sort((a, b) => b.change.date.compareTo(a.change.date));
+    return rows;
+  }
+
+  List<TradeDoc> latePurchaseOrders({int days = 7}) {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    return openPurchaseOrders().where((doc) {
+      final issued = DateTime(doc.date.year, doc.date.month, doc.date.day);
+      return day.difference(issued).inDays >= days;
+    }).toList();
+  }
+
+  List<({TradeDoc doc, DocLine line, Product product, double netUnit, double cost})> belowCostSales({DateTime? from, DateTime? to}) {
+    final rows = <({TradeDoc doc, DocLine line, Product product, double netUnit, double cost})>[];
+    for (final doc in docs) {
+      if (doc.kind != DocKind.sale || doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      for (final line in doc.lines) {
+        final cost = line.unitCost;
+        if (cost == null || cost <= 0.009 || line.qty <= 0.0001) continue;
+        final product = productById(line.productId);
+        if (product == null) continue;
+        final netUnit = line.net / line.qty;
+        if (netUnit + 0.009 >= cost) continue;
+        rows.add((doc: doc, line: line, product: product, netUnit: round2(netUnit), cost: cost));
+      }
+    }
+    rows.sort((a, b) => b.doc.date.compareTo(a.doc.date));
+    return rows;
+  }
+
+  List<TradeDoc> duePurchaseWeek({int days = 7}) {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    final until = day.add(Duration(days: days));
+    final rows = docs.where((doc) {
+      if (doc.kind != DocKind.purchase || doc.status != DocStatus.approved) return false;
+      if (docRemaining(doc) <= 0.009) return false;
+      final due = DateTime(doc.dueDate.year, doc.dueDate.month, doc.dueDate.day);
+      return !due.isBefore(day) && !due.isAfter(until);
+    }).toList();
+    rows.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    return rows;
+  }
+
+  List<({String taxNo, List<Party> parties})> duplicateTaxNos() {
+    final grouped = <String, List<Party>>{};
+    for (final party in parties) {
+      final key = party.taxNo.replaceAll(RegExp(r'\s+'), '');
+      if (key.isEmpty) continue;
+      grouped.putIfAbsent(key, () => []).add(party);
+    }
+    final rows = <({String taxNo, List<Party> parties})>[];
+    for (final entry in grouped.entries) {
+      if (entry.value.length < 2) continue;
+      final people = [...entry.value]..sort((a, b) => a.name.compareTo(b.name));
+      rows.add((taxNo: entry.key, parties: people));
+    }
+    rows.sort((a, b) => a.taxNo.compareTo(b.taxNo));
+    return rows;
+  }
+
+  List<({TradeDoc doc, List<Product> products})> inactiveOpenDocs() {
+    const openKinds = {DocKind.saleOrder, DocKind.purchaseOrder, DocKind.saleQuote};
+    final rows = <({TradeDoc doc, List<Product> products})>[];
+    for (final doc in docs) {
+      if (!openKinds.contains(doc.kind) || doc.status != DocStatus.approved) continue;
+      final closed = <Product>[];
+      for (final line in doc.lines) {
+        final product = productById(line.productId);
+        if (product == null || product.active || closed.any((item) => item.id == product.id)) continue;
+        closed.add(product);
+      }
+      if (closed.isEmpty) continue;
+      rows.add((doc: doc, products: closed));
+    }
+    rows.sort((a, b) => b.doc.date.compareTo(a.doc.date));
+    return rows;
+  }
+
+  List<({Party party, double discount, int invoices})> discountByParty({DateTime? from, DateTime? to}) {
+    final totals = <String, double>{};
+    final invoices = <String, int>{};
+    for (final doc in docs) {
+      if (doc.kind != DocKind.sale || doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      var given = 0.0;
+      for (final line in doc.lines) {
+        given += line.qty * line.unitPrice * line.discountRate / 100;
+      }
+      given = round2(given);
+      if (given <= 0.009) continue;
+      totals[doc.partyId] = round2((totals[doc.partyId] ?? 0) + given);
+      invoices[doc.partyId] = (invoices[doc.partyId] ?? 0) + 1;
+    }
+    final rows = <({Party party, double discount, int invoices})>[];
+    for (final entry in totals.entries) {
+      final party = partyById(entry.key);
+      if (party == null) continue;
+      rows.add((party: party, discount: entry.value, invoices: invoices[entry.key] ?? 0));
+    }
+    rows.sort((a, b) => b.discount.compareTo(a.discount));
+    return rows;
+  }
+
+  Payment? lastCashMovement(String partyId) {
+    Payment? latest;
+    for (final payment in payments) {
+      if (payment.partyId != partyId) continue;
+      final account = accountById(payment.accountId);
+      if (account == null) continue;
+      if (account.role != AccountRole.cash && account.role != AccountRole.bank) continue;
+      if (latest == null || payment.date.isAfter(latest.date)) latest = payment;
+    }
+    return latest;
+  }
+
+  bool docMatchesQuery(TradeDoc doc, String query) {
+    final key = query.trim().toLowerCase();
+    if (key.isEmpty) return true;
+    final products = doc.lines.map((line) => productName(line.productId)).join(' ');
+    final blob = '${doc.no} ${partyName(doc.partyId)} ${doc.note} ${doc.returnReason} $products'.toLowerCase();
+    return blob.contains(key);
   }
 
   String? setDelivery(String id, DeliveryStatus status) {
@@ -960,7 +1350,7 @@ class AppStore extends ChangeNotifier {
       if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
       final sign = doc.kind == DocKind.sale ? 1.0 : -1.0;
       for (final line in doc.lines) {
-        final cost = (productById(line.productId)?.purchasePrice ?? 0) * line.qty;
+        final cost = _lineCost(line) * line.qty;
         qty[line.productId] = (qty[line.productId] ?? 0) + sign * line.qty;
         profit[line.productId] = (profit[line.productId] ?? 0) + sign * (line.net - cost);
       }
@@ -1076,8 +1466,11 @@ class AppStore extends ChangeNotifier {
     for (final product in products) {
       if (brand.isNotEmpty && product.brand != brand) continue;
       if (category.isNotEmpty && product.category != category) continue;
+      final oldBuy = product.purchasePrice;
+      final oldSell = product.salePrice;
       if (sale) product.salePrice = round2(product.salePrice * factor);
       if (purchase) product.purchasePrice = round2(product.purchasePrice * factor);
+      _rememberPrice(product.id, oldBuy, product.purchasePrice, oldSell, product.salePrice);
       count++;
     }
     if (count == 0) return (error: 'Bu filtrede ürün yok', count: 0);
@@ -1700,7 +2093,7 @@ class AppStore extends ChangeNotifier {
       if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
       final sign = doc.kind == DocKind.sale ? 1.0 : -1.0;
       for (final line in doc.lines) {
-        final cost = (productById(line.productId)?.purchasePrice ?? 0) * line.qty;
+        final cost = _lineCost(line) * line.qty;
         profit += sign * (line.net - cost);
       }
     }
@@ -1709,6 +2102,50 @@ class AppStore extends ChangeNotifier {
 
   List<Product> criticalProducts() {
     return products.where((product) => product.active && stockOf(product.id) <= product.minStock).toList();
+  }
+
+  List<TradeDoc> dueTodaySales() {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    return docs.where((doc) {
+      if (doc.kind != DocKind.sale || doc.status != DocStatus.approved) return false;
+      final due = DateTime(doc.dueDate.year, doc.dueDate.month, doc.dueDate.day);
+      if (due != day) return false;
+      return docRemaining(doc) > 0.009;
+    }).toList()
+      ..sort((a, b) => a.no.compareTo(b.no));
+  }
+
+  List<CollectionRow> dueTodaySheet() {
+    final grouped = <String, List<TradeDoc>>{};
+    for (final doc in dueTodaySales()) {
+      grouped.putIfAbsent(doc.partyId, () => []).add(doc);
+    }
+    final rows = <CollectionRow>[];
+    for (final entry in grouped.entries) {
+      final party = partyById(entry.key);
+      if (party == null) continue;
+      final remaining = entry.value.fold<double>(0, (sum, doc) => sum + docRemaining(doc));
+      rows.add(CollectionRow(party: party, remaining: round2(remaining), docs: entry.value));
+    }
+    rows.sort((a, b) => b.remaining.compareTo(a.remaining));
+    return rows;
+  }
+
+  List<CollectionRow> collectionSheet() {
+    final grouped = <String, List<TradeDoc>>{};
+    for (final doc in overdueSales()) {
+      grouped.putIfAbsent(doc.partyId, () => []).add(doc);
+    }
+    final rows = <CollectionRow>[];
+    for (final entry in grouped.entries) {
+      final party = partyById(entry.key);
+      if (party == null) continue;
+      final remaining = entry.value.fold<double>(0, (sum, doc) => sum + docRemaining(doc));
+      rows.add(CollectionRow(party: party, remaining: round2(remaining), docs: entry.value));
+    }
+    rows.sort((a, b) => b.remaining.compareTo(a.remaining));
+    return rows;
   }
 
   List<TradeDoc> overdueSales() {
@@ -1767,6 +2204,217 @@ class AppStore extends ChangeNotifier {
     return buckets;
   }
 
+  Map<String, double> payableAging() {
+    final buckets = <String, double>{
+      'Vadesi gelmemiş': 0,
+      '0-30 gün': 0,
+      '31-60 gün': 0,
+      '60+ gün': 0,
+    };
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    for (final doc in docs) {
+      if (doc.kind != DocKind.purchase || doc.status != DocStatus.approved) continue;
+      final remaining = docRemaining(doc);
+      if (remaining <= 0.009) continue;
+      final due = DateTime(doc.dueDate.year, doc.dueDate.month, doc.dueDate.day);
+      final days = day.difference(due).inDays;
+      final key = days < 0
+          ? 'Vadesi gelmemiş'
+          : days <= 30
+              ? '0-30 gün'
+              : days <= 60
+                  ? '31-60 gün'
+                  : '60+ gün';
+      buckets[key] = round2(buckets[key]! + remaining);
+    }
+    return buckets;
+  }
+
+  List<TradeDoc> openDocs(String partyId) {
+    final party = partyById(partyId);
+    if (party == null) return const [];
+    return docs.where((doc) {
+      if (doc.partyId != partyId || doc.status != DocStatus.approved) return false;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.purchase) return false;
+      if (party.type == PartyType.customer && doc.kind != DocKind.sale) return false;
+      if (party.type == PartyType.supplier && doc.kind != DocKind.purchase) return false;
+      return docRemaining(doc) > 0.009;
+    }).toList()
+      ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+  }
+
+  String? settleOpenDocs({
+    required String partyId,
+    required String accountId,
+    required DateTime date,
+    required String note,
+    required List<({String docId, double amount})> lines,
+  }) {
+    if (lines.isEmpty) return 'Belge seçin';
+    if (accountById(accountId) == null) return 'Hesap seçin';
+    if (partyById(partyId) == null) return 'Cari bulunamadı';
+    for (final line in lines) {
+      if (line.amount <= 0) return 'Tutar girin';
+      final doc = docById(line.docId);
+      if (doc == null || doc.partyId != partyId) return 'Belge bulunamadı';
+      if (line.amount > docRemaining(doc) + 0.009) return '${doc.no} kalanından fazla';
+    }
+    for (final line in lines) {
+      final doc = docById(line.docId)!;
+      final error = addPayment(Payment(
+        id: '',
+        no: '',
+        date: date,
+        partyId: partyId,
+        docId: doc.id,
+        accountId: accountId,
+        direction: closingDirection(doc.kind),
+        method: PayMethod.transfer,
+        amount: line.amount,
+        note: note.trim(),
+      ));
+      if (error != null) return error;
+    }
+    return null;
+  }
+
+  List<PartyCall> partyCalls(String partyId) {
+    return calls.where((item) => item.partyId == partyId).toList()..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  String? addCall(PartyCall call) {
+    if (partyById(call.partyId) == null) return 'Cari bulunamadı';
+    if (call.text.trim().isEmpty) return 'Görüşme notu yazın';
+    if (call.id.isEmpty) call.id = newId();
+    call.text = call.text.trim();
+    calls.add(call);
+    _touch();
+    return null;
+  }
+
+  List<PriceChange> priceHistory(String productId) {
+    return priceChanges.where((item) => item.productId == productId).toList()..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  List<({Party party, DateTime date, double price, String docNo})> supplierPrices(String productId) {
+    final latest = <String, ({Party party, DateTime date, double price, String docNo})>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved) continue;
+      if (doc.kind != DocKind.purchase && doc.kind != DocKind.purchaseWaybill) continue;
+      final party = partyById(doc.partyId);
+      if (party == null) continue;
+      for (final line in doc.lines) {
+        if (line.productId != productId) continue;
+        final prev = latest[doc.partyId];
+        if (prev != null && !doc.date.isAfter(prev.date)) continue;
+        latest[doc.partyId] = (party: party, date: doc.date, price: line.unitPrice, docNo: doc.no);
+      }
+    }
+    return latest.values.toList()..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  List<VisitPlan> dueVisits() {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    return visits.where((item) {
+      if (item.done) return false;
+      final when = DateTime(item.date.year, item.date.month, item.date.day);
+      return !when.isAfter(day);
+    }).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  List<VisitPlan> partyVisits(String partyId) {
+    return visits.where((item) => item.partyId == partyId).toList()..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  String? addVisit(VisitPlan plan) {
+    if (partyById(plan.partyId) == null) return 'Cari bulunamadı';
+    if (plan.text.trim().isEmpty) return 'Plan notu yazın';
+    if (plan.id.isEmpty) plan.id = newId();
+    plan.text = plan.text.trim();
+    visits.add(plan);
+    _touch();
+    return null;
+  }
+
+  String? completeVisit(String id) {
+    final index = visits.indexWhere((item) => item.id == id);
+    if (index < 0) return 'Plan yok';
+    visits[index].done = true;
+    _touch();
+    return null;
+  }
+
+  List<({Party party, double amount})> topParties({
+    required bool suppliers,
+    DateTime? from,
+    DateTime? to,
+    int limit = 8,
+  }) {
+    final mainKind = suppliers ? DocKind.purchase : DocKind.sale;
+    final returnKind = suppliers ? DocKind.purchaseReturn : DocKind.saleReturn;
+    final totals = <String, double>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      if (doc.kind != mainKind && doc.kind != returnKind) continue;
+      final sign = doc.kind == mainKind ? 1.0 : -1.0;
+      totals[doc.partyId] = (totals[doc.partyId] ?? 0) + sign * doc.gross;
+    }
+    final rows = <({Party party, double amount})>[];
+    for (final entry in totals.entries) {
+      final party = partyById(entry.key);
+      if (party == null || entry.value.abs() < 0.009) continue;
+      rows.add((party: party, amount: round2(entry.value)));
+    }
+    rows.sort((a, b) => b.amount.compareTo(a.amount));
+    if (rows.length > limit) return rows.sublist(0, limit);
+    return rows;
+  }
+
+  void _rememberPrice(String productId, double oldPurchase, double newPurchase, double oldSale, double newSale) {
+    if ((oldPurchase - newPurchase).abs() < 0.009 && (oldSale - newSale).abs() < 0.009) return;
+    priceChanges.add(
+      PriceChange(
+        id: newId(),
+        productId: productId,
+        date: DateTime.now(),
+        oldPurchase: oldPurchase,
+        newPurchase: newPurchase,
+        oldSale: oldSale,
+        newSale: newSale,
+      ),
+    );
+  }
+
+  void _stampSaleCost(TradeDoc doc) {
+    if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) return;
+    for (final line in doc.lines) {
+      line.unitCost = productById(line.productId)?.purchasePrice ?? 0;
+    }
+  }
+
+  void _freezeMissingCosts() {
+    for (final doc in docs) {
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
+      if (doc.status != DocStatus.approved && doc.status != DocStatus.invoiced) continue;
+      for (final line in doc.lines) {
+        line.unitCost ??= productById(line.productId)?.purchasePrice ?? 0;
+      }
+    }
+  }
+
+  double _lineCost(DocLine line) => line.unitCost ?? productById(line.productId)?.purchasePrice ?? 0;
+
+  String? removeCall(String id) {
+    final before = calls.length;
+    calls.removeWhere((item) => item.id == id);
+    if (calls.length == before) return 'Kayıt yok';
+    _touch();
+    return null;
+  }
+
   List<({Product product, double qty, double revenue})> topSellers({
     DateTime? from,
     DateTime? to,
@@ -1793,6 +2441,93 @@ class AppStore extends ChangeNotifier {
     return rows;
   }
 
+  List<DormantParty> dormantCustomers({int days = 90}) {
+    final today = DateTime.now();
+    final day = DateTime(today.year, today.month, today.day);
+    final last = <String, DateTime>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved && doc.status != DocStatus.invoiced) continue;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleWaybill) continue;
+      final prev = last[doc.partyId];
+      if (prev == null || doc.date.isAfter(prev)) last[doc.partyId] = doc.date;
+    }
+    final rows = <DormantParty>[];
+    for (final party in parties) {
+      if (!party.active || party.type == PartyType.supplier) continue;
+      final sold = last[party.id];
+      if (sold != null && day.difference(DateTime(sold.year, sold.month, sold.day)).inDays < days) continue;
+      rows.add(DormantParty(party: party, lastSale: sold));
+    }
+    rows.sort((a, b) => (a.lastSale ?? DateTime(2000)).compareTo(b.lastSale ?? DateTime(2000)));
+    return rows;
+  }
+
+  List<TradeDoc> openShipments() {
+    return docs.where((doc) {
+      if (doc.deliveryStatus == DeliveryStatus.delivered || doc.status == DocStatus.cancelled) return false;
+      if (doc.kind == DocKind.saleWaybill) {
+        return doc.status == DocStatus.approved || doc.status == DocStatus.invoiced;
+      }
+      if (doc.kind != DocKind.sale || doc.status != DocStatus.approved) return false;
+      final source = doc.sourceDocId.isEmpty ? null : docById(doc.sourceDocId);
+      return source == null || source.kind != DocKind.saleWaybill;
+    }).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  String shipmentAddress(TradeDoc doc) {
+    if (doc.shipAddress.trim().isNotEmpty) return doc.shipAddress.trim();
+    final party = partyById(doc.partyId);
+    if (party == null) return '';
+    return [party.address, party.city].where((part) => part.trim().isNotEmpty).join(' ');
+  }
+
+  List<({Party party, DateTime date, double price, String docNo})> customerPrices(String productId) {
+    final latest = <String, ({Party party, DateTime date, double price, String docNo})>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved && doc.status != DocStatus.invoiced) continue;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleWaybill) continue;
+      final party = partyById(doc.partyId);
+      if (party == null) continue;
+      for (final line in doc.lines) {
+        if (line.productId != productId) continue;
+        final prev = latest[doc.partyId];
+        if (prev != null && !doc.date.isAfter(prev.date)) continue;
+        latest[doc.partyId] = (party: party, date: doc.date, price: line.unitPrice, docNo: doc.no);
+      }
+    }
+    return latest.values.toList()..sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  List<({Product product, double qty, int docs})> topReturns({DateTime? from, DateTime? to, int limit = 8}) {
+    final qty = <String, double>{};
+    final count = <String, int>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved || doc.kind != DocKind.saleReturn || !_inRange(doc.date, from, to)) continue;
+      final seen = <String>{};
+      for (final line in doc.lines) {
+        qty[line.productId] = (qty[line.productId] ?? 0) + line.qty;
+        if (seen.add(line.productId)) count[line.productId] = (count[line.productId] ?? 0) + 1;
+      }
+    }
+    final rows = <({Product product, double qty, int docs})>[];
+    for (final entry in qty.entries) {
+      final product = productById(entry.key);
+      if (product == null) continue;
+      rows.add((product: product, qty: entry.value, docs: count[entry.key] ?? 0));
+    }
+    rows.sort((a, b) => b.qty.compareTo(a.qty));
+    if (rows.length > limit) return rows.sublist(0, limit);
+    return rows;
+  }
+
+  List<TradeDoc> pendingEDocs() {
+    return docs.where((doc) => doc.kind == DocKind.sale && doc.status == DocStatus.approved && doc.eDoc == EDocStatus.none).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  bool _needsReturnReason(TradeDoc doc) => doc.kind == DocKind.saleReturn || doc.kind == DocKind.purchaseReturn;
+
   Map<String, double> salesByBrand({DateTime? from, DateTime? to}) {
     final totals = <String, double>{};
     for (final doc in docs) {
@@ -1802,6 +2537,73 @@ class AppStore extends ChangeNotifier {
       for (final line in doc.lines) {
         final brand = productById(line.productId)?.brand ?? 'Diğer';
         totals[brand] = round2((totals[brand] ?? 0) + sign * line.net);
+      }
+    }
+    return totals;
+  }
+
+  String? markReconciled(String partyId) {
+    final party = partyById(partyId);
+    if (party == null) return 'Cari bulunamadı';
+    party.reconciledOn = DateTime.now();
+    _touch();
+    return null;
+  }
+
+  List<({String name, double amount})> salesByRep({DateTime? from, DateTime? to}) {
+    final totals = <String, double>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
+      final rep = partyById(doc.partyId)?.salesRep.trim() ?? '';
+      final name = rep.isEmpty ? 'Plasiyersiz' : rep;
+      final sign = doc.kind == DocKind.sale ? 1.0 : -1.0;
+      totals[name] = (totals[name] ?? 0) + sign * doc.gross;
+    }
+    final rows = <({String name, double amount})>[
+      for (final entry in totals.entries)
+        if (entry.value.abs() >= 0.009) (name: entry.key, amount: round2(entry.value)),
+    ]..sort((a, b) => b.amount.compareTo(a.amount));
+    return rows;
+  }
+
+  List<({Party party, double days, int invoices})> collectionDays() {
+    final rows = <({Party party, double days, int invoices})>[];
+    for (final party in parties) {
+      if (!party.active || party.type == PartyType.supplier) continue;
+      final samples = <int>[];
+      for (final doc in docs) {
+        if (doc.partyId != party.id || doc.kind != DocKind.sale || doc.status != DocStatus.approved) continue;
+        if (docRemaining(doc) > 0.009) continue;
+        DateTime? closed;
+        for (final payment in payments) {
+          if (payment.docId != doc.id || payment.direction != PayDirection.inbound) continue;
+          if (closed == null || payment.date.isAfter(closed)) closed = payment.date;
+        }
+        if (closed == null) continue;
+        final start = DateTime(doc.date.year, doc.date.month, doc.date.day);
+        final end = DateTime(closed.year, closed.month, closed.day);
+        final days = end.difference(start).inDays;
+        samples.add(days < 0 ? 0 : days);
+      }
+      if (samples.isEmpty) continue;
+      final avg = samples.fold<int>(0, (sum, days) => sum + days) / samples.length;
+      rows.add((party: party, days: avg, invoices: samples.length));
+    }
+    rows.sort((a, b) => b.days.compareTo(a.days));
+    return rows;
+  }
+
+  Map<String, double> salesByCategory({DateTime? from, DateTime? to}) {
+    final totals = <String, double>{};
+    for (final doc in docs) {
+      if (doc.status != DocStatus.approved || !_inRange(doc.date, from, to)) continue;
+      if (doc.kind != DocKind.sale && doc.kind != DocKind.saleReturn) continue;
+      final sign = doc.kind == DocKind.sale ? 1.0 : -1.0;
+      for (final line in doc.lines) {
+        final category = productById(line.productId)?.category ?? '';
+        final name = category.trim().isEmpty ? 'Diğer' : category.trim();
+        totals[name] = round2((totals[name] ?? 0) + sign * line.net);
       }
     }
     return totals;

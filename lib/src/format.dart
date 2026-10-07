@@ -37,6 +37,26 @@ double? parseNum(String raw) {
   return double.tryParse(text);
 }
 
+String visitKindLabel(VisitKind kind) {
+  switch (kind) {
+    case VisitKind.call:
+      return 'Arama';
+    case VisitKind.visit:
+      return 'Ziyaret';
+  }
+}
+
+String callKindLabel(CallKind kind) {
+  switch (kind) {
+    case CallKind.call:
+      return 'Arama';
+    case CallKind.promise:
+      return 'Söz';
+    case CallKind.note:
+      return 'Not';
+  }
+}
+
 String partyTypeLabel(PartyType type) {
   switch (type) {
     case PartyType.customer:
@@ -191,6 +211,15 @@ String ticketStatusLabel(TicketStatus status) {
       return 'Kapandı';
     case TicketStatus.cancelled:
       return 'İptal';
+  }
+}
+
+String instrumentKindLabel(InstrumentKind kind) {
+  switch (kind) {
+    case InstrumentKind.check:
+      return 'Çek';
+    case InstrumentKind.promissory:
+      return 'Senet';
   }
 }
 

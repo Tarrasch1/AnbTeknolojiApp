@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models.dart';
+import '../sheets.dart';
 import '../store.dart';
+import '../xlsx_sheet.dart';
 import 'cards.dart';
+import 'save_file_stub.dart' if (dart.library.html) 'save_file_web.dart';
 import 'scope.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -20,6 +23,8 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
   int _tab = 0;
   final _search = TextEditingController();
   String _category = 'Tümü';
+  String _brand = 'Tümü';
+  String _moveParty = '';
 
   static const _hints = [
     'Kategoriye göre süzülür. Satıra tıklayınca ürün kartı açılır.',
@@ -167,13 +172,31 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
 
   Widget _products(AppStore store) {
     final query = _search.text.trim().toLowerCase();
+    final brands = store.products
+        .where((product) => _category == 'Tümü' || product.category == _category)
+        .map((product) => product.brand)
+        .where((brand) => brand.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final brand = brands.contains(_brand) ? _brand : 'Tümü';
     final items = store.products.where((product) {
       if (_category != 'Tümü' && product.category != _category) return false;
+      if (brand != 'Tümü' && product.brand != brand) return false;
       if (query.isEmpty) return true;
       final blob = '${product.name} ${product.sku} ${product.barcode} ${product.brand}'.toLowerCase();
       return blob.contains(query);
     }).toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+      ..sort((a, b) => a.sku.compareTo(b.sku));
+    var qtySum = 0.0;
+    var costSum = 0.0;
+    var saleSum = 0.0;
+    for (final product in items) {
+      final qty = store.stockOf(product.id);
+      qtySum += qty;
+      costSum += product.purchasePrice * qty;
+      saleSum += product.salePrice * qty;
+    }
 
     return Column(
       children: [
@@ -189,6 +212,11 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
                 ),
               ),
               const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Excel',
+                onPressed: items.isEmpty ? null : () => _exportStock(context, store, items),
+                icon: const Icon(Icons.grid_on_outlined),
+              ),
               OutlinedButton.icon(
                 onPressed: () => _bulkPrice(context, store),
                 icon: const Icon(Icons.sell_outlined),
@@ -215,6 +243,23 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
                   label: Text(item),
                   selected: _category == item,
                   onSelected: (_) => setState(() => _category = item),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        SizedBox(
+          height: 52,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            children: ['Tümü', ...brands].map((item) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(item == 'Tümü' ? 'Tüm markalar' : item),
+                  selected: brand == item,
+                  onSelected: (_) => setState(() => _brand = item),
                 ),
               );
             }).toList(),
@@ -264,6 +309,7 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
                                   },
                                 ),
                               ),
+                              _StockFoot(qty: qtySum, cost: costSum, sale: saleSum),
                             ],
                           ),
                         ),
@@ -277,24 +323,58 @@ class _StockPageState extends State<StockPage> with SingleTickerProviderStateMix
   }
 
   Widget _moves(AppStore store) {
-    final items = [...store.moves]..sort((a, b) => b.date.compareTo(a.date));
-    if (items.isEmpty) return const EmptyHint('Stok hareketi yok.');
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final move = items[index];
-        final inbound = move.qty >= 0;
-        return RecordRow(
-          icon: inbound ? Icons.add_circle_outline : Icons.remove_circle_outline,
-          tone: inbound ? kGood : kBad,
-          title: store.productName(move.productId),
-          subtitle: '${_moveStory(store, move)} · ${shortDate(move.date)}',
-          trailing: '${inbound ? '+' : ''}${qtyText(move.qty)}',
-        );
-      },
+    final partyIds = <String>{};
+    for (final move in store.moves) {
+      final partyId = _partyOf(store, move);
+      if (partyId != null) partyIds.add(partyId);
+    }
+    final parties = partyIds.map(store.partyById).whereType<Party>().toList()..sort((a, b) => a.name.compareTo(b.name));
+    final selected = parties.any((party) => party.id == _moveParty) ? _moveParty : '';
+    final items = store.moves.where((move) => selected.isEmpty || _partyOf(store, move) == selected).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: DropdownButtonFormField<String>(
+            value: selected,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Müşteri / tedarikçi'),
+            items: [
+              const DropdownMenuItem(value: '', child: Text('Tüm cariler')),
+              ...parties.map((party) => DropdownMenuItem(value: party.id, child: Text(party.name, overflow: TextOverflow.ellipsis))),
+            ],
+            onChanged: (value) => setState(() => _moveParty = value ?? ''),
+          ),
+        ),
+        Expanded(
+          child: items.isEmpty
+              ? const EmptyHint('Bu filtrede stok hareketi yok.')
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final move = items[index];
+                    final inbound = move.qty >= 0;
+                    return RecordRow(
+                      icon: inbound ? Icons.add_circle_outline : Icons.remove_circle_outline,
+                      tone: inbound ? kGood : kBad,
+                      title: store.productName(move.productId),
+                      subtitle: '${_moveStory(store, move)} · ${shortDate(move.date)}',
+                      trailing: '${inbound ? '+' : ''}${qtyText(move.qty)}',
+                    );
+                  },
+                ),
+        ),
+      ],
     );
+  }
+
+  String? _partyOf(AppStore store, StockMove move) {
+    final doc = move.docId.isEmpty ? null : store.docById(move.docId);
+    if (doc == null || doc.partyId.isEmpty) return null;
+    return doc.partyId;
   }
 
   String _moveStory(AppStore store, StockMove move) {
@@ -478,6 +558,49 @@ class ProductDetailPage extends StatelessWidget {
               ),
             ),
           ),
+          const SectionTitle('Fiyat geçmişi'),
+          const Text('Alış veya satış fiyatı değişince eski ve yeni tutar burada kalır.', style: TextStyle(color: kMuted)),
+          const SizedBox(height: 8),
+          if (store.priceHistory(product.id).isEmpty)
+            const EmptyHint('Fiyat değişikliği yok.')
+          else
+            for (final change in store.priceHistory(product.id))
+              Card(
+                child: ListTile(
+                  title: Text(shortDate(change.date), style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(
+                    'Alış ${money(change.oldPurchase)} → ${money(change.newPurchase)}\nSatış ${money(change.oldSale)} → ${money(change.newSale)}',
+                  ),
+                ),
+              ),
+          const SectionTitle('Tedarikçi alış fiyatları'),
+          const Text('Onaylı alış faturası ve alış irsaliyesindeki son birim fiyat. Aynı tedarikçinin eski fiyatı yerini sonuncuya bırakır.', style: TextStyle(color: kMuted)),
+          const SizedBox(height: 8),
+          if (store.supplierPrices(product.id).isEmpty)
+            const EmptyHint('Bu ürünün onaylı alışı yok.')
+          else
+            for (final row in store.supplierPrices(product.id))
+              Card(
+                child: ListTile(
+                  title: Text(row.party.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text('${row.docNo} · ${shortDate(row.date)}'),
+                  trailing: Text(money(row.price), style: const TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+          const SectionTitle('Son satış fiyatları'),
+          const Text('Onaylı satış faturası ve çıkış irsaliyesindeki son birim fiyat. Aynı müşterinin eski fiyatı yerini sonuncuya bırakır.', style: TextStyle(color: kMuted)),
+          const SizedBox(height: 8),
+          if (store.customerPrices(product.id).isEmpty)
+            const EmptyHint('Bu ürünün onaylı satışı yok.')
+          else
+            for (final row in store.customerPrices(product.id))
+              Card(
+                child: ListTile(
+                  title: Text(row.party.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text('${row.docNo} · ${shortDate(row.date)}'),
+                  trailing: Text(money(row.price), style: const TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
           const SectionTitle('Depo bazında stok'),
           ...store.warehouses.map((warehouse) {
             return Card(
@@ -851,6 +974,27 @@ Future<void> _manual(BuildContext context, Product product, {required bool inbou
   serials.dispose();
 }
 
+Future<void> _exportStock(BuildContext context, AppStore store, List<Product> items) async {
+  final table = SheetTable(
+    const ['Stok kodu', 'Ürün adı', 'Stok adedi', 'Birim maliyeti', 'Birim satış fiyatı', 'Toplam maliyet', 'Toplam satış bedeli'],
+    [
+      for (final product in items)
+        [
+          product.sku,
+          product.name,
+          sheetNum(store.stockOf(product.id)),
+          sheetNum(product.purchasePrice),
+          sheetNum(product.salePrice),
+          sheetNum(round2(product.purchasePrice * store.stockOf(product.id))),
+          sheetNum(round2(product.salePrice * store.stockOf(product.id))),
+        ],
+    ],
+  );
+  await saveBytes(encodeXlsx(table), 'stok-listesi.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  if (!context.mounted) return;
+  showMessage(context, 'Stok listesi Excel olarak indirildi');
+}
+
 class _StockHead extends StatelessWidget {
   const _StockHead();
 
@@ -869,6 +1013,35 @@ class _StockHead extends StatelessWidget {
             _StockCell('Birim satış fiyatı', 130, head: true, align: TextAlign.right),
             _StockCell('Toplam maliyet', 130, head: true, align: TextAlign.right),
             _StockCell('Toplam satış bedeli', 140, head: true, align: TextAlign.right),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StockFoot extends StatelessWidget {
+  const _StockFoot({required this.qty, required this.cost, required this.sale});
+
+  final double qty;
+  final double cost;
+  final double sale;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFE8F1FB),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            const _StockCell('Dip toplam', 120, head: true),
+            const Expanded(child: SizedBox.shrink()),
+            _StockCell(qtyText(qty), 80, align: TextAlign.right, color: kNavy),
+            const _StockCell('', 120),
+            const _StockCell('', 130),
+            _StockCell(money(cost), 130, align: TextAlign.right, color: kNavy),
+            _StockCell(money(sale), 140, align: TextAlign.right, color: kNavy),
           ],
         ),
       ),

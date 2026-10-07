@@ -4,6 +4,9 @@ import '../cities.dart';
 import '../format.dart';
 import 'cards.dart';
 import 'docs_page.dart';
+import 'party_page.dart';
+import 'print_html.dart';
+import 'print_launch_stub.dart' if (dart.library.html) 'print_launch_web.dart';
 import 'scope.dart';
 import 'stock_page.dart';
 import 'theme.dart';
@@ -31,12 +34,42 @@ class _ReportsPageState extends State<ReportsPage> {
     final store = StoreScope.of(context);
     final range = _range();
     final sellers = store.topSellers(from: range.$1, to: range.$2);
+    final customers = store.topParties(suppliers: false, from: range.$1, to: range.$2);
+    final suppliers = store.topParties(suppliers: true, from: range.$1, to: range.$2);
     final brands = store.salesByBrand(from: range.$1, to: range.$2);
     final aging = store.receivableAging();
+    final payables = store.payableAging();
     final brandRows = brands.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final maxBrand = brandRows.fold<double>(0, (max, entry) => entry.value > max ? entry.value : max);
     final brandTotal = brandRows.fold<double>(0, (sum, entry) => sum + entry.value);
+    final categories = store.salesByCategory(from: range.$1, to: range.$2);
+    final categoryRows = categories.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final maxCategory = categoryRows.fold<double>(0, (max, entry) => entry.value > max ? entry.value : max);
+    final categoryTotal = categoryRows.fold<double>(0, (sum, entry) => sum + entry.value);
+    final dormant = store.dormantCustomers();
+    final returned = store.topReturns(from: range.$1, to: range.$2);
+    final edocs = store.pendingEDocs();
     final overdue = store.overdueSales();
+    final reps = store.salesByRep(from: range.$1, to: range.$2);
+    final paces = store.collectionDays();
+    final dueToday = store.dueTodaySheet();
+    final saleOrders = store.openSaleOrders();
+    final purchaseOrders = store.openPurchaseOrders();
+    final quotes = store.staleQuotes();
+    final ages = store.stockAges();
+    final rates = store.returnRates(from: range.$1, to: range.$2);
+    final cash = store.cashClose();
+    final promises = store.duePromises();
+    final breaches = store.overLimitParties();
+    final reconcileWait = store.reconcileQueue();
+    final repDays = store.repCollectionDays();
+    final jumps = store.costJumps();
+    final lateBuys = store.latePurchaseOrders();
+    final losses = store.belowCostSales(from: range.$1, to: range.$2);
+    final payWeek = store.duePurchaseWeek();
+    final taxDupes = store.duplicateTaxNos();
+    final deadDocs = store.inactiveOpenDocs();
+    final discounts = store.discountByParty(from: range.$1, to: range.$2);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -131,7 +164,7 @@ class _ReportsPageState extends State<ReportsPage> {
           );
         }),
         const SectionTitle('Ürün kârı'),
-        const _Caption('Düşük kâr üstte. Tutar, satışın netinden alış fiyatı kadarı düşünülerek hesaplanır.'),
+        const _Caption('Düşük kâr üstte. Maliyet, satış onayındaki alış fiyatıdır. Sonradan değişen alış fiyatı eski kârı yeniden yazmaz. Eski faturalarda alış fiyatı kayıtlı değilse, yedek açıldığında o günkü alış fiyatı kilitlenir.'),
         Builder(builder: (context) {
           final rows = store.productProfits(from: range.$1, to: range.$2);
           if (rows.isEmpty) return const EmptyHint('Bu aralıkta kâr hesabı yok.');
@@ -171,6 +204,85 @@ class _ReportsPageState extends State<ReportsPage> {
                 MaterialPageRoute(builder: (_) => ProductDetailPage(productId: sellers[i].product.id)),
               ),
             ),
+        const SectionTitle('En çok ciro yapan müşteriler'),
+        const _Caption('KDV dahil satış cirosu. İadeler düşer. Seçili döneme bağlıdır.'),
+        if (customers.isEmpty)
+          const EmptyHint('Bu aralıkta müşteri cirosu yok.')
+        else
+          for (var i = 0; i < customers.length; i++)
+            RecordRow(
+              icon: _rankIcon(i),
+              tone: i == 0 ? kNavy : kInfo,
+              title: customers[i].party.name,
+              subtitle: customers[i].party.city.isEmpty ? 'İl yok' : customers[i].party.city,
+              trailing: money(customers[i].amount),
+              trailingColor: customers[i].amount < 0 ? kBad : kGood,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: customers[i].party.id)),
+              ),
+            ),
+        const SectionTitle('En çok ciro yapan tedarikçiler'),
+        const _Caption('KDV dahil alış cirosu. İadeler düşer. Seçili döneme bağlıdır.'),
+        if (suppliers.isEmpty)
+          const EmptyHint('Bu aralıkta tedarikçi cirosu yok.')
+        else
+          for (var i = 0; i < suppliers.length; i++)
+            RecordRow(
+              icon: _rankIcon(i),
+              tone: i == 0 ? kTeal : kInfo,
+              title: suppliers[i].party.name,
+              subtitle: suppliers[i].party.city.isEmpty ? 'İl yok' : suppliers[i].party.city,
+              trailing: money(suppliers[i].amount),
+              trailingColor: kTeal,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: suppliers[i].party.id)),
+              ),
+            ),
+        const SectionTitle('Plasiyer cirosu'),
+        const _Caption('KDV dahil satış cirosu. İadeler düşer. Cari kartındaki bugünkü plasiyer adına göredir. Seçili döneme bağlıdır.'),
+        if (reps.isEmpty)
+          const EmptyHint('Bu aralıkta plasiyer cirosu yok.')
+        else
+          for (final row in reps)
+            RecordRow(
+              icon: Icons.badge_outlined,
+              tone: row.name == 'Plasiyersiz' ? kMuted : kNavy,
+              title: row.name,
+              subtitle: row.name == 'Plasiyersiz' ? 'Kartta plasiyer adı yok' : 'Müşteri kartındaki ad',
+              trailing: money(row.amount),
+              trailingColor: row.amount < 0 ? kBad : kGood,
+            ),
+        const SectionTitle('Ortalama tahsilat süresi'),
+        const _Caption('Kapanmış satışta, fatura tarihinden belgeye bağlı son tahsilata kadar geçen gün. Belgesiz tahsilat süreye girmez. Dönem çipleri bu kutuyu değiştirmez.'),
+        if (paces.isEmpty)
+          const EmptyHint('Belgeye bağlı kapanmış tahsilat yok.')
+        else
+          for (final row in paces)
+            RecordRow(
+              icon: Icons.timer_outlined,
+              tone: row.days > 30 ? kWarn : kGood,
+              title: row.party.name,
+              subtitle: '${row.invoices} fatura',
+              trailing: '${qtyText(row.days)} gün',
+              trailingColor: row.days > 30 ? kWarn : kGood,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: row.party.id))),
+            ),
+        const SectionTitle('Plasiyer tahsilat süresi'),
+        const _Caption('Plasiyerin müşterilerinde kapanmış, belgeye bağlı tahsilatların fatura adedine göre ortalaması. Dönem çipleri bu kutuyu değiştirmez.'),
+        if (repDays.isEmpty)
+          const EmptyHint('Plasiyere bağlanacak kapanmış tahsilat yok.')
+        else
+          for (final row in repDays)
+            RecordRow(
+              icon: Icons.badge_outlined,
+              tone: row.days > 30 ? kWarn : kGood,
+              title: row.name,
+              subtitle: '${row.customers} müşteri · ${row.invoices} fatura',
+              trailing: '${qtyText(row.days)} gün',
+              trailingColor: row.days > 30 ? kWarn : kGood,
+            ),
         const SectionTitle('Marka dağılımı'),
         const _Caption('Çubuk en yüksek markaya göre dolar. Yüzde, bu dönemdeki marka cirosunun payıdır. KDV hariç.'),
         if (brandRows.isEmpty)
@@ -184,9 +296,33 @@ class _ReportsPageState extends State<ReportsPage> {
               share: brandTotal.abs() < 0.009 ? 0 : brandRows[i].value / brandTotal * 100,
               tone: _brandTone(i),
             ),
+        const SectionTitle('Kategori cirosu'),
+        const _Caption('KDV hariç net satış. İadeler düşer. Seçili döneme bağlıdır.'),
+        if (categoryRows.isEmpty)
+          const EmptyHint('Kategori satışı yok.')
+        else
+          for (var i = 0; i < categoryRows.length; i++)
+            _BrandBar(
+              name: categoryRows[i].key,
+              amount: categoryRows[i].value,
+              ratio: maxCategory <= 0 ? 0 : (categoryRows[i].value / maxCategory).clamp(0, 1).toDouble(),
+              share: categoryTotal.abs() < 0.009 ? 0 : categoryRows[i].value / categoryTotal * 100,
+              tone: _brandTone(i),
+            ),
         const SectionTitle('Alacak yaşlandırma'),
         const _Caption('Açık satış faturalarının vadesine göre kalan tutarı.'),
         for (final entry in aging.entries)
+          RecordRow(
+            icon: entry.key == 'Vadesi gelmemiş' ? Icons.event_available_outlined : Icons.schedule,
+            tone: _agingTone(entry.key),
+            title: entry.key,
+            subtitle: _agingHint(entry.key),
+            trailing: money(entry.value),
+            trailingColor: _agingTone(entry.key),
+          ),
+        const SectionTitle('Tedarikçi borç yaşlandırma'),
+        const _Caption('Açık alış faturalarında bizim borcumuz. Vadesi gelen gün bugünü de kapsar.'),
+        for (final entry in payables.entries)
           RecordRow(
             icon: entry.key == 'Vadesi gelmemiş' ? Icons.event_available_outlined : Icons.schedule,
             tone: _agingTone(entry.key),
@@ -206,7 +342,43 @@ class _ReportsPageState extends State<ReportsPage> {
             trailing: money(store.stockValue(warehouseId: warehouse.id)),
           ),
         const SectionTitle('Vadesi geçen faturalar'),
-        const _Caption('Tutar, faturanın henüz kapanmamış kalanıdır.'),
+        const _Caption('Tutar, faturanın henüz kapanmamış kalanıdır. Tahsilat listesi aynı carileri telefonuyla gruplar.'),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: overdue.isEmpty ? null : () => launchPrint(collectionHtml(store)),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Tahsilat listesi'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: dueToday.isEmpty ? null : () => launchPrint(dueTodayHtml(store)),
+            icon: const Icon(Icons.today_outlined),
+            label: const Text('Bugün vadesi gelenler'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.tonalIcon(
+              onPressed: promises.isEmpty ? null : () => launchPrint(promiseHtml(store)),
+              icon: const Icon(Icons.handshake_outlined),
+              label: const Text('Ödeme sözü'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: cash.isEmpty ? null : () => launchPrint(cashCloseHtml(store)),
+              icon: const Icon(Icons.point_of_sale_outlined),
+              label: const Text('Kasa gün sonu'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         if (overdue.isEmpty)
           const EmptyHint('Vadesi geçen fatura yok.')
         else
@@ -218,6 +390,301 @@ class _ReportsPageState extends State<ReportsPage> {
               subtitle: '${store.partyName(doc.partyId)} · vade ${shortDate(doc.dueDate)}',
               trailing: money(store.docRemaining(doc)),
               trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Uyuyan müşteriler'),
+        const _Caption('90 gündür onaylı satışı veya çıkış irsaliyesi olmayan müşteriler. Tedarikçiler bu listede yoktur.'),
+        if (dormant.isEmpty)
+          const EmptyHint('Son 90 günde her müşteriye satış var.')
+        else
+          for (final row in dormant)
+            RecordRow(
+              icon: Icons.phone_outlined,
+              tone: kWarn,
+              title: row.party.name,
+              subtitle: '${row.party.phone.trim().isEmpty ? 'Telefon yok' : row.party.phone.trim()} · ${row.party.city.isEmpty ? 'İl yok' : row.party.city}',
+              trailing: row.lastSale == null ? 'Hiç yok' : shortDate(row.lastSale!),
+              trailingColor: kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: row.party.id))),
+            ),
+        const SectionTitle('En çok iade edilen ürünler'),
+        const _Caption('Onaylı satış iadelerindeki adet. İade nedeni belgenin üzerinde durur. Seçili döneme bağlıdır.'),
+        if (returned.isEmpty)
+          const EmptyHint('Bu aralıkta satış iadesi yok.')
+        else
+          for (final row in returned)
+            RecordRow(
+              icon: Icons.assignment_return_outlined,
+              tone: kBad,
+              title: row.product.name,
+              subtitle: '${row.product.brand} · ${row.docs} belge',
+              trailing: '${qtyText(row.qty)} adet',
+              trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailPage(productId: row.product.id))),
+            ),
+        const SectionTitle('İade oranı'),
+        const _Caption('Dönemdeki iade adedi, dönemdeki satış adedine bölünür. İadesi olmayan ürün yazılmaz. Eski satışın iadesi oranı yüzde 100’ün üstüne çıkabilir.'),
+        if (rates.isEmpty)
+          const EmptyHint('Bu aralıkta iadesi olan satış yok.')
+        else
+          for (final row in rates)
+            RecordRow(
+              icon: Icons.percent,
+              tone: row.rate >= 20 ? kBad : kWarn,
+              title: row.product.name,
+              subtitle: 'Satış ${qtyText(row.sold)} · iade ${qtyText(row.returned)}',
+              trailing: '%${qtyText(row.rate)}',
+              trailingColor: row.rate >= 20 ? kBad : kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailPage(productId: row.product.id))),
+            ),
+        const SectionTitle('Stok yaşı'),
+        const _Caption('Elde duran ürünün son onaylı alış veya alış irsaliyesinden bugüne kaç gün geçtiği. Elle stok girişi yaşı değiştirmez. Dönem çipleri bu kutuyu değiştirmez.'),
+        if (ages.isEmpty)
+          const EmptyHint('Elde stok yok.')
+        else
+          for (final row in ages.take(12))
+            RecordRow(
+              icon: Icons.hourglass_bottom,
+              tone: (row.days ?? 0) >= 90 ? kWarn : kNavy,
+              title: row.product.name,
+              subtitle: '${row.product.brand} · elde ${qtyText(row.onHand)}',
+              trailing: row.days == null ? 'Alış yok' : '${row.days} gün',
+              trailingColor: (row.days ?? 0) >= 90 ? kWarn : kNavy,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailPage(productId: row.product.id))),
+            ),
+        const SectionTitle('Dönmeyen teklifler'),
+        const _Caption('15 gün ve daha eski onaylı teklifler. Faturaya veya siparişe dönünce listeden düşer.'),
+        if (quotes.isEmpty)
+          const EmptyHint('15 gündür bekleyen teklif yok.')
+        else
+          for (final doc in quotes)
+            RecordRow(
+              icon: Icons.request_quote_outlined,
+              tone: kWarn,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · ${shortDate(doc.date)} · ${store.orderBrief(doc)}',
+              trailing: money(doc.gross),
+              trailingColor: kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Açık satış siparişleri'),
+        const _Caption('Onaylı ve faturası kesilmemiş siparişler.'),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: saleOrders.isEmpty ? null : () => launchPrint(orderListHtml(store)),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Satış siparişlerini yazdır'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (saleOrders.isEmpty)
+          const EmptyHint('Açık satış siparişi yok.')
+        else
+          for (final doc in saleOrders)
+            RecordRow(
+              icon: Icons.shopping_bag_outlined,
+              tone: kInfo,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · ${store.orderBrief(doc)}',
+              trailing: shortDate(doc.date),
+              trailingColor: kInfo,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Açık alış siparişleri'),
+        const _Caption('Onaylı ve faturası kesilmemiş alış siparişleri.'),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: purchaseOrders.isEmpty ? null : () => launchPrint(orderListHtml(store, purchases: true)),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Alış siparişlerini yazdır'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (purchaseOrders.isEmpty)
+          const EmptyHint('Açık alış siparişi yok.')
+        else
+          for (final doc in purchaseOrders)
+            RecordRow(
+              icon: Icons.local_shipping_outlined,
+              tone: kTeal,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · ${store.orderBrief(doc)}',
+              trailing: shortDate(doc.date),
+              trailingColor: kTeal,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Geciken alış siparişleri'),
+        const _Caption('7 gün ve daha eski, faturası hâlâ kesilmemiş alış siparişleri.'),
+        if (lateBuys.isEmpty)
+          const EmptyHint('7 gündür bekleyen alış siparişi yok.')
+        else
+          for (final doc in lateBuys)
+            RecordRow(
+              icon: Icons.schedule,
+              tone: kBad,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · ${store.orderBrief(doc)}',
+              trailing: shortDate(doc.date),
+              trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Limit aşan cariler'),
+        const _Caption('Bakiyesi kredi limitini geçen müşteriler. Açık sipariş bu listeye girmez; satış onayındaki uyarıya girer.'),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: breaches.isEmpty ? null : () => launchPrint(limitHtml(store)),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Limit listesini yazdır'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (breaches.isEmpty)
+          const EmptyHint('Limiti aşan müşteri yok.')
+        else
+          for (final row in breaches)
+            RecordRow(
+              icon: Icons.speed,
+              tone: kBad,
+              title: row.party.name,
+              subtitle: '${row.party.phone.trim().isEmpty ? 'Telefon yok' : row.party.phone.trim()} · bakiye ${money(row.balance)} · limit ${money(row.party.creditLimit)}',
+              trailing: money(row.over),
+              trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: row.party.id))),
+            ),
+        const SectionTitle('Mutabakat bekleyenler'),
+        const _Caption('Bakiyesi açık cariler. Mutabakat tarihi hiç yok ya da 30 günden eski.'),
+        if (reconcileWait.isEmpty)
+          const EmptyHint('Mutabakatı bekleyen cari yok.')
+        else
+          for (final party in reconcileWait)
+            RecordRow(
+              icon: Icons.fact_check_outlined,
+              tone: kWarn,
+              title: party.name,
+              subtitle: party.reconciledOn == null ? 'Mutabakat yok' : 'Son mutabakat ${shortDate(party.reconciledOn!)}',
+              trailing: money(store.partyBalance(party.id)),
+              trailingColor: store.partyBalance(party.id) < 0 ? kInfo : kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: party.id))),
+            ),
+        const SectionTitle('Alış sıçraması'),
+        const _Caption('Son alış fiyatı, bir önceki alış fiyatına göre yüzde 10 veya daha fazla artan ürünler.'),
+        if (jumps.isEmpty)
+          const EmptyHint('Yüzde 10’u aşan alış artışı yok.')
+        else
+          for (final row in jumps)
+            RecordRow(
+              icon: Icons.trending_up,
+              tone: kWarn,
+              title: row.product.name,
+              subtitle: '${shortDate(row.change.date)} · ${money(row.change.oldPurchase)} → ${money(row.change.newPurchase)}',
+              trailing: money(row.change.newPurchase),
+              trailingColor: kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailPage(productId: row.product.id))),
+            ),
+        const SectionTitle('Zararına kapanmış satışlar'),
+        const _Caption('Onaylı satışta satırın net birim fiyatı, belgede kilitlenen alış maliyetinin altında. Güncel alış fiyatı kullanılmaz. Satış iadesi girmez.'),
+        if (losses.isEmpty)
+          const EmptyHint('Maliyeti kilitli zarar satırı yok.')
+        else
+          for (final row in losses)
+            RecordRow(
+              icon: Icons.money_off,
+              tone: kBad,
+              title: row.product.name,
+              subtitle: '${row.doc.no} · ${store.partyName(row.doc.partyId)} · satış ${money(row.netUnit)} · maliyet ${money(row.cost)}',
+              trailing: shortDate(row.doc.date),
+              trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: row.doc.id))),
+            ),
+        const SectionTitle('Bu hafta ödenecek alışlar'),
+        const _Caption('Kalanı olan onaylı alış faturaları. Vadesi bugün veya 7 gün içinde. Geçmiş vadeler bu listede yoktur.'),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.tonalIcon(
+            onPressed: payWeek.isEmpty ? null : () => launchPrint(payableWeekHtml(store)),
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Ödeme listesini yazdır'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (payWeek.isEmpty)
+          const EmptyHint('Bu hafta vadesi gelen açık alış yok.')
+        else
+          for (final doc in payWeek)
+            RecordRow(
+              icon: Icons.event,
+              tone: kWarn,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · vade ${shortDate(doc.dueDate)}',
+              trailing: money(store.docRemaining(doc)),
+              trailingColor: kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
+            ),
+        const SectionTitle('Aynı vergi numarası'),
+        const _Caption('Boş olmayan vergi numarası birden fazla caride yazılı. Kartlar birleştirilmez.'),
+        if (taxDupes.isEmpty)
+          const EmptyHint('Paylaşılan vergi numarası yok.')
+        else
+          for (final row in taxDupes)
+            RecordRow(
+              icon: Icons.badge_outlined,
+              tone: kWarn,
+              title: row.taxNo,
+              subtitle: row.parties.map((party) => party.name).join(' · '),
+              trailing: '${row.parties.length} cari',
+              trailingColor: kWarn,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: row.parties.first.id))),
+            ),
+        const SectionTitle('Pasif ürünlü açık belgeler'),
+        const _Caption('Ürün kartı kapalı. Satış siparişi, alış siparişi veya teklif hâlâ onaylı ve faturası kesilmemiş.'),
+        if (deadDocs.isEmpty)
+          const EmptyHint('Pasif ürünlü açık sipariş veya teklif yok.')
+        else
+          for (final row in deadDocs)
+            RecordRow(
+              icon: Icons.visibility_off_outlined,
+              tone: kBad,
+              title: row.doc.no,
+              subtitle: '${store.partyName(row.doc.partyId)} · ${row.products.map((product) => product.name).join(', ')}',
+              trailing: docKindLabel(row.doc.kind),
+              trailingColor: kBad,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: row.doc.id))),
+            ),
+        const SectionTitle('Verilen iskonto'),
+        const _Caption('Dönemdeki onaylı satışlarda satır iskontosunun tutarı. KDV hariçtir. Satış iadesi düşülmez.'),
+        if (discounts.isEmpty)
+          const EmptyHint('Bu dönemde iskonto yazılmış satış yok.')
+        else
+          for (final row in discounts)
+            RecordRow(
+              icon: Icons.percent,
+              tone: kInfo,
+              title: row.party.name,
+              subtitle: '${row.invoices} fatura',
+              trailing: money(row.discount),
+              trailingColor: kInfo,
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PartyDetailPage(partyId: row.party.id))),
+            ),
+        const SectionTitle('E-belge iş listesi'),
+        const _Caption('Onaylı satışta e-belge işareti boş olanlar. Bu liste manueldir. GİB bağlantısı değildir.'),
+        if (edocs.isEmpty)
+          const EmptyHint('İşareti boş onaylı satış yok.')
+        else
+          for (final doc in edocs)
+            RecordRow(
+              icon: Icons.receipt_outlined,
+              tone: kInfo,
+              title: doc.no,
+              subtitle: '${store.partyName(doc.partyId)} · ${shortDate(doc.date)}',
+              trailing: eDocLabel(doc.eDoc),
+              trailingColor: kInfo,
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DocDetailPage(docId: doc.id))),
             ),
       ],
@@ -419,10 +886,12 @@ Color _agingTone(String key) {
     case 'Vadesi gelmemiş':
       return kInfo;
     case '1-30 gün':
+    case '0-30 gün':
       return kWarn;
     case '31-60 gün':
     case '61-90 gün':
     case '90+ gün':
+    case '60+ gün':
       return kBad;
     default:
       return kNavy;
@@ -435,8 +904,12 @@ String _agingHint(String key) {
       return 'Vadesi henüz gelmemiş açık faturalar.';
     case '1-30 gün':
       return 'Vadesi 1 ile 30 gün arasında geçmiş.';
+    case '0-30 gün':
+      return 'Vadesi bugün veya son 30 gün içinde gelmiş.';
     case '31-60 gün':
       return 'Vadesi 31 ile 60 gün arasında geçmiş.';
+    case '60+ gün':
+      return 'Vadesi 60 günden fazla geçmiş.';
     case '61-90 gün':
       return 'Vadesi 61 ile 90 gün arasında geçmiş.';
     case '90+ gün':

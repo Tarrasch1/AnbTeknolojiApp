@@ -23,15 +23,27 @@ class WholesaleApp extends StatefulWidget {
 class _WholesaleAppState extends State<WholesaleApp> {
   late final AppStore _store = widget.store ?? AppStore();
   late final Future<void> _loading = _store.ensureLoaded();
+  final _theme = ThemeController();
+
+  @override
+  void dispose() {
+    _theme.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return StoreScope(
+    return ThemeScope(
+      controller: _theme,
+      child: AnimatedBuilder(
+        animation: _theme,
+        builder: (context, _) {
+          return StoreScope(
       store: _store,
       child: MaterialApp(
         title: 'Akım Elektrik',
         debugShowCheckedModeBanner: false,
-        theme: buildAppTheme(),
+        theme: buildAppTheme(_theme.palette),
         locale: const Locale('tr'),
         supportedLocales: const [Locale('tr')],
         localizationsDelegates: const [
@@ -51,6 +63,9 @@ class _WholesaleAppState extends State<WholesaleApp> {
             return const HomeShell();
           },
         ),
+      ),
+          );
+        },
       ),
     );
   }

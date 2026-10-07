@@ -61,16 +61,15 @@ class _HoverCardState extends State<HoverCard> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
-        margin: EdgeInsets.only(top: _hover ? 0 : 2, bottom: _hover ? 4 : 2),
         decoration: BoxDecoration(
-          color: _hover ? const Color(0xFFF8FBFF) : Colors.white,
+          color: context.palette.card,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _hover ? kNavy : kLine, width: _hover ? 1.4 : 1),
+          border: Border.all(color: _hover ? context.palette.accent : context.palette.line),
           boxShadow: [
             BoxShadow(
-              color: kNavy.withOpacity(_hover ? 0.14 : 0.05),
-              blurRadius: _hover ? 22 : 8,
-              offset: Offset(0, _hover ? 10 : 3),
+              color: const Color(0xFF0F172A).withOpacity(_hover ? 0.10 : 0.04),
+              blurRadius: _hover ? 18 : 8,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -106,30 +105,34 @@ class KpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 240,
+      width: 228,
       child: HoverCard(
-        padding: const EdgeInsets.all(14),
-        child: Row(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: tone.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: tone, size: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: kMuted, fontSize: 12, fontWeight: FontWeight.w600, height: 1.25)),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: tone.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: tone, size: 18),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: const TextStyle(color: Color(0xFF667085), fontSize: 12)),
-                  const SizedBox(height: 4),
-                  Text(value, style: TextStyle(fontWeight: FontWeight.w800, color: tone, fontSize: 15)),
-                ],
-              ),
+            const SizedBox(height: 12),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(value, maxLines: 1, style: figureStyle(kInk, size: 22)),
             ),
           ],
         ),
@@ -164,17 +167,17 @@ class PageIntro extends StatelessWidget {
           Container(
             width: 40,
             height: 40,
-            decoration: BoxDecoration(color: kSoft, borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, color: kNavy, size: 22),
+            decoration: BoxDecoration(color: context.palette.accent.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+            child: Icon(icon, color: context.palette.accent, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: kInk)),
+                Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: context.palette.canvasInk)),
                 const SizedBox(height: 2),
-                Text(hint, style: const TextStyle(color: kMuted, height: 1.35)),
+                Text(hint, style: TextStyle(color: context.palette.muted, height: 1.35)),
               ],
             ),
           ),
@@ -495,7 +498,7 @@ class SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8, top: 8),
       child: Row(
         children: [
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: kNavy))),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: context.palette.canvasInk))),
           if (trailing != null) trailing!,
         ],
       ),
@@ -512,12 +515,13 @@ class StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(99),
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.22)),
       ),
-      child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+      child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
     );
   }
 }

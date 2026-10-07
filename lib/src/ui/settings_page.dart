@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../format.dart';
 import '../models.dart';
 import 'scope.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -25,6 +26,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _iban;
   late final TextEditingController _vat;
   late final TextEditingController _term;
+  late final TextEditingController _target;
   var _ready = false;
 
   @override
@@ -43,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _iban = TextEditingController(text: profile.iban);
     _vat = TextEditingController(text: numField(profile.defaultVat));
     _term = TextEditingController(text: '${profile.defaultTermDays}');
+    _target = TextEditingController(text: profile.monthlyTarget == 0 ? '' : numField(profile.monthlyTarget));
     _ready = true;
   }
 
@@ -60,6 +63,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _iban.dispose();
       _vat.dispose();
       _term.dispose();
+      _target.dispose();
     }
     super.dispose();
   }
@@ -76,6 +80,14 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Ayarlar',
           hint: 'Fişte görünen firma bilgisi. Yedek bu cihazda duran kayıtların kopyasıdır.',
           icon: Icons.settings_outlined,
+        ),
+        const SectionTitle('Görünüm'),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('Koyu zemin', style: TextStyle(color: context.palette.canvasInk, fontWeight: FontWeight.w700)),
+          subtitle: Text('Menü, üst bar ve sayfa zemini koyulaşır. Tutar kartları beyaz kalır.', style: TextStyle(color: context.palette.muted)),
+          value: ThemeScope.of(context).isDark,
+          onChanged: (_) => ThemeScope.of(context).toggle(),
         ),
         const SectionTitle('Firma'),
         TextField(controller: _name, decoration: const InputDecoration(labelText: 'Ünvan')),
@@ -105,6 +117,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(width: 8),
           Expanded(child: TextField(controller: _term, decoration: const InputDecoration(labelText: 'Varsayılan vade (gün)'), keyboardType: TextInputType.number)),
         ]),
+        const SizedBox(height: 8),
+        TextField(controller: _target, decoration: const InputDecoration(labelText: 'Aylık ciro hedefi'), keyboardType: TextInputType.number),
         const SizedBox(height: 12),
         Align(
           alignment: Alignment.centerLeft,
@@ -123,6 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   iban: _iban.text.trim(),
                   defaultVat: parseNum(_vat.text) ?? 20,
                   defaultTermDays: int.tryParse(_term.text) ?? 30,
+                  monthlyTarget: parseNum(_target.text) ?? 0,
                 ),
               );
               showMessage(context, 'Firma bilgisi kaydedildi');

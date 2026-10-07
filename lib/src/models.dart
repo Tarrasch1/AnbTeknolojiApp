@@ -130,6 +130,7 @@ class CompanyProfile {
     this.iban = '',
     this.defaultVat = 20,
     this.defaultTermDays = 30,
+    this.monthlyTarget = 0,
   });
 
   String name;
@@ -143,6 +144,7 @@ class CompanyProfile {
   String iban;
   double defaultVat;
   int defaultTermDays;
+  double monthlyTarget;
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -156,6 +158,7 @@ class CompanyProfile {
         'iban': iban,
         'defaultVat': defaultVat,
         'defaultTermDays': defaultTermDays,
+        'monthlyTarget': monthlyTarget,
       };
 
   factory CompanyProfile.fromJson(Map<String, dynamic> json) => CompanyProfile(
@@ -170,6 +173,7 @@ class CompanyProfile {
         iban: json['iban'] as String? ?? '',
         defaultVat: (json['defaultVat'] as num?)?.toDouble() ?? 20,
         defaultTermDays: (json['defaultTermDays'] as num?)?.toInt() ?? 30,
+        monthlyTarget: (json['monthlyTarget'] as num?)?.toDouble() ?? 0,
       );
 }
 
@@ -318,6 +322,8 @@ class Party {
     this.priceListId = '',
     this.note = '',
     this.active = true,
+    this.salesRep = '',
+    this.reconciledOn,
   });
 
   String id;
@@ -335,6 +341,8 @@ class Party {
   String priceListId;
   String note;
   bool active;
+  String salesRep;
+  DateTime? reconciledOn;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -352,6 +360,8 @@ class Party {
         'priceListId': priceListId,
         'note': note,
         'active': active,
+        'salesRep': salesRep,
+        'reconciledOn': reconciledOn?.toIso8601String(),
       };
 
   factory Party.fromJson(Map<String, dynamic> json) => Party(
@@ -370,6 +380,8 @@ class Party {
         priceListId: json['priceListId'] as String? ?? '',
         note: json['note'] as String? ?? '',
         active: json['active'] as bool? ?? true,
+        salesRep: json['salesRep'] as String? ?? '',
+        reconciledOn: json['reconciledOn'] == null ? null : DateTime.parse(json['reconciledOn'] as String),
       );
 }
 
@@ -442,6 +454,7 @@ class DocLine {
     this.vatRate = 20,
     List<String>? serials,
     this.note = '',
+    this.unitCost,
   }) : serials = serials ?? <String>[];
 
   String productId;
@@ -451,6 +464,7 @@ class DocLine {
   double vatRate;
   List<String> serials;
   String note;
+  double? unitCost;
 
   double get net => round2(qty * unitPrice * (1 - discountRate / 100));
   double get vatAmount => round2(net * vatRate / 100);
@@ -464,6 +478,7 @@ class DocLine {
         vatRate: vatRate,
         serials: List<String>.from(serials),
         note: note,
+        unitCost: unitCost,
       );
 
   Map<String, dynamic> toJson() => {
@@ -474,6 +489,7 @@ class DocLine {
         'vatRate': vatRate,
         'serials': serials,
         'note': note,
+        'unitCost': unitCost,
       };
 
   factory DocLine.fromJson(Map<String, dynamic> json) => DocLine(
@@ -484,6 +500,7 @@ class DocLine {
         vatRate: (json['vatRate'] as num?)?.toDouble() ?? 20,
         serials: (json['serials'] as List?)?.map((e) => e.toString()).toList(),
         note: json['note'] as String? ?? '',
+        unitCost: json['unitCost'] == null ? null : (json['unitCost'] as num).toDouble(),
       );
 }
 
@@ -506,6 +523,7 @@ class TradeDoc {
     this.shipAddress = '',
     this.deliveryStatus = DeliveryStatus.none,
     this.promiseDate,
+    this.returnReason = '',
   }) : lines = lines ?? <DocLine>[];
 
   String id;
@@ -525,6 +543,7 @@ class TradeDoc {
   String shipAddress;
   DeliveryStatus deliveryStatus;
   DateTime? promiseDate;
+  String returnReason;
 
   double get net => round2(lines.fold(0.0, (sum, line) => sum + line.net));
   double get vatTotal => round2(lines.fold(0.0, (sum, line) => sum + line.vatAmount));
@@ -548,6 +567,7 @@ class TradeDoc {
         'shipAddress': shipAddress,
         'deliveryStatus': deliveryStatus.name,
         'promiseDate': promiseDate?.toIso8601String(),
+        'returnReason': returnReason,
       };
 
   factory TradeDoc.fromJson(Map<String, dynamic> json) => TradeDoc(
@@ -570,6 +590,7 @@ class TradeDoc {
         shipAddress: json['shipAddress'] as String? ?? '',
         deliveryStatus: enumByName(DeliveryStatus.values, json['deliveryStatus'], DeliveryStatus.none),
         promiseDate: json['promiseDate'] == null ? null : DateTime.parse(json['promiseDate'] as String),
+        returnReason: json['returnReason'] as String? ?? '',
       );
 }
 
@@ -912,6 +933,118 @@ class ServiceTicket {
         fee: (json['fee'] as num?)?.toDouble() ?? 0,
         feeInvoiced: json['feeInvoiced'] as bool? ?? false,
         note: json['note'] as String? ?? '',
+      );
+}
+
+enum CallKind { call, promise, note }
+
+enum VisitKind { call, visit }
+
+class PriceChange {
+  PriceChange({
+    required this.id,
+    required this.productId,
+    required this.date,
+    required this.oldPurchase,
+    required this.newPurchase,
+    required this.oldSale,
+    required this.newSale,
+  });
+
+  String id;
+  String productId;
+  DateTime date;
+  double oldPurchase;
+  double newPurchase;
+  double oldSale;
+  double newSale;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'productId': productId,
+        'date': date.toIso8601String(),
+        'oldPurchase': oldPurchase,
+        'newPurchase': newPurchase,
+        'oldSale': oldSale,
+        'newSale': newSale,
+      };
+
+  factory PriceChange.fromJson(Map<String, dynamic> json) => PriceChange(
+        id: json['id'] as String? ?? '',
+        productId: json['productId'] as String? ?? '',
+        date: DateTime.parse(json['date'] as String),
+        oldPurchase: (json['oldPurchase'] as num?)?.toDouble() ?? 0,
+        newPurchase: (json['newPurchase'] as num?)?.toDouble() ?? 0,
+        oldSale: (json['oldSale'] as num?)?.toDouble() ?? 0,
+        newSale: (json['newSale'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+class VisitPlan {
+  VisitPlan({
+    required this.id,
+    required this.partyId,
+    required this.date,
+    required this.kind,
+    required this.text,
+    this.done = false,
+  });
+
+  String id;
+  String partyId;
+  DateTime date;
+  VisitKind kind;
+  String text;
+  bool done;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'partyId': partyId,
+        'date': date.toIso8601String(),
+        'kind': kind.name,
+        'text': text,
+        'done': done,
+      };
+
+  factory VisitPlan.fromJson(Map<String, dynamic> json) => VisitPlan(
+        id: json['id'] as String? ?? '',
+        partyId: json['partyId'] as String? ?? '',
+        date: DateTime.parse(json['date'] as String),
+        kind: enumByName(VisitKind.values, json['kind'], VisitKind.call),
+        text: json['text'] as String? ?? '',
+        done: json['done'] as bool? ?? false,
+      );
+}
+
+class PartyCall {
+  PartyCall({
+    required this.id,
+    required this.partyId,
+    required this.date,
+    required this.kind,
+    required this.text,
+  });
+
+  String id;
+  String partyId;
+  DateTime date;
+  CallKind kind;
+  String text;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'partyId': partyId,
+        'date': date.toIso8601String(),
+        'kind': kind.name,
+        'text': text,
+      };
+
+  factory PartyCall.fromJson(Map<String, dynamic> json) => PartyCall(
+        id: json['id'] as String? ?? '',
+        partyId: json['partyId'] as String? ?? '',
+        date: DateTime.parse(json['date'] as String),
+        kind: enumByName(CallKind.values, json['kind'], CallKind.note),
+        text: json['text'] as String? ?? '',
       );
 }
 
